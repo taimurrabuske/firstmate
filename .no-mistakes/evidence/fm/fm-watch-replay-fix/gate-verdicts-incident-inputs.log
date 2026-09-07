@@ -1,0 +1,10 @@
+=== Gate verdicts for the incident's exact durable state ===
+$ FM_STATE_OVERRIDE=/tmp/fm-replay-demo/gate-home/state bin/fm-watch-replay-gate.sh 'stale: default:wMA:p2'
+  -> drop empty-queue-acked-recovery
+
+=== Counterfactual: the same wake still live and unhandled must present once ===
+$ FM_STATE_OVERRIDE=/tmp/fm-replay-demo/gate-live/state bin/fm-watch-replay-gate.sh 'stale: default:wMA:p2'
+  -> deliver
+
+=== Counterfactual: persist-failure annotated replay of the LIVE wake (first-line parse) ===
+  -> deliver

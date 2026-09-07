@@ -1,0 +1,22 @@
+=== Incident replay: identical acked wake re-presented at consecutive turn boundaries ===
+Seeded durable state (from the incident report):
+  state/.wake-queue         : 0 bytes (row consumed via fm-wake-drain.sh --ack-through 998)
+  state/.watcher-down       : acked:handling:130247.1788720192.pbH0L2
+  state/<task>.meta         : absent (task torn down)
+  session-replacement-actionable.json : one pending record, message 'stale: default:wMA:p2'
+
+########## BEFORE (base commit 29015aa) ##########
+turn 1: PRESENTED the identical wake 1x  <-- FIRSTMATE WATCHER WAKE: stale: default:wMA:p2
+turn 2: PRESENTED the identical wake 1x  <-- FIRSTMATE WATCHER WAKE: stale: default:wMA:p2
+turn 3: PRESENTED the identical wake 1x  <-- FIRSTMATE WATCHER WAKE: stale: default:wMA:p2
+turn 4: PRESENTED the identical wake 1x  <-- FIRSTMATE WATCHER WAKE: stale: default:wMA:p2
+  durable handoff record still present: {"version":2,"pending":[{"version":1,"token":"130247-1788720192-1","message":"stale: default:wMA:p2","predecessorArmPid":""}]}
+  wake queue bytes: 0  .watcher-down: acked:handling:130247.1788720192.pbH0L2
+
+########## AFTER (target commit 75a35aa: accept-once + replay gate) ##########
+turn 1: silent - no re-presentation
+turn 2: silent - no re-presentation
+turn 3: silent - no re-presentation
+turn 4: silent - no re-presentation
+  durable handoff record: cleared
+  wake queue bytes: 0  .watcher-down: acked:handling:130247.1788720192.pbH0L2
