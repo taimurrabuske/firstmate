@@ -1,0 +1,53 @@
+=== 1) Operator runs: fm-teardown.sh t-9k2 --record-only (completed ship, slot reused by other-task-77)
+record-only archive t-9k2 complete (pool slot /tmp/fm-ro-demo.PhxZya/demo/worktree left to task other-task-77 (home /tmp/fm-ro-demo.PhxZya/other-home), archived at /tmp/fm-ro-demo.PhxZya/demo/home/state/archived-records/t-9k2.record)
+exit=0
+
+=== 2) Post-state: task record removed, archive evidence written, backlog closed
+ls: cannot access '/tmp/fm-ro-demo.PhxZya/demo/home/state/t-9k2.meta': No such file or directory
+--- state/archived-records/t-9k2.record:
+schema=fm-record-only-archive.v1
+task_id=t-9k2
+kind=ship
+project=/tmp/fm-ro-demo.PhxZya/demo/project
+worktree=/tmp/fm-ro-demo.PhxZya/demo/worktree
+backend=tmux
+mode=no-mistakes
+pr=https://github.com/example/synthetic/pull/42
+spawn_gen=demo-t-9k2
+slot_owner_task=other-task-77
+slot_owner_home=/tmp/fm-ro-demo.PhxZya/other-home
+endpoint_state_at_archive=missing
+last_status=done: shipped
+archived_epoch=1789347369
+archived_at=2026-09-14T00:56:09Z
+reason=confirmed-pooled-location-reused
+--- state/archived-records/t-9k2.status:
+working: setup
+done: shipped
+--- backlog row now:
+task:
+  id: t-9k2
+  title: "synthetic demo task https://github.com/example/synthetic/pull/42"
+  state: done
+  blocked: no
+  blocked_by: none
+  held: no
+  hold_reason: "-"
+  hold_kind: "-"
+  hold_until: "-"
+  kind: ship
+  repo: "-"
+--- reused slot claim untouched:
+task=other-task-77
+home=/tmp/fm-ro-demo.PhxZya/other-home
+--- worktrees still registered:
+/tmp/fm-ro-demo.PhxZya/demo/project        01934e7 [master]
+/tmp/fm-ro-demo.PhxZya/demo/pool/1/project 01934e7 (detached HEAD)
+
+=== 3) Idempotence: operator re-runs the same command
+record-only archive t-9k2 already complete (/tmp/fm-ro-demo.PhxZya/demo/home/state/archived-records/t-9k2.record)
+exit=0
+
+=== 4) Safety: --record-only combined with --force is refused
+error: --record-only cannot be combined with --force or --legacy-record
+exit=2

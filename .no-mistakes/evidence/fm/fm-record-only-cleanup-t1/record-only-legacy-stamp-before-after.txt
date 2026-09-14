@@ -1,0 +1,15 @@
+Before/after demonstration: record-only must refuse a legacy- incarnation stamp (review finding F1, user-approved fix in 997518f)
+
+########## PRE-FIX tree (217618b) ##########
+--- meta carries: spawn_gen=legacy-20240101T000000Z-999
+--- running: fm-teardown.sh t-leg --record-only
+record-only archive t-leg complete (pool slot /tmp/fm-legacy-fm-ro-prefix.sf210c.Xt5HOc/worktree left to task other-task-77 (home /tmp/fm-legacy-fm-ro-prefix.sf210c.Xt5HOc/other-home), archived at /tmp/fm-legacy-fm-ro-prefix.sf210c.Xt5HOc/home/state/archived-records/t-leg.record)
+exit=0
+RESULT: legacy-stamped record WAS ARCHIVED (spawn_gen=legacy-20240101T000000Z-999)
+
+########## TARGET tree (997518f) ##########
+--- meta carries: spawn_gen=legacy-20240101T000000Z-999
+--- running: fm-teardown.sh t-leg --record-only
+REFUSED: task t-leg's record carries the legacy incarnation stamp legacy-20240101T000000Z-999 left by an abandoned --legacy-record teardown, not an incarnation any spawn published; record-only archival never accepts a legacy incarnation. Reconcile it by hand instead. Nothing was changed.
+exit=1
+RESULT: no archive written; task record still present: yes
