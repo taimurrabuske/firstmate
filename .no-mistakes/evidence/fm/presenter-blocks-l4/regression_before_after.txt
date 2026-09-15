@@ -1,0 +1,38 @@
+presenter.blocks plot review-fix regression check
+before = commit 9ceb244 plot.py, after = HEAD (eb34082) plot.py
+
+[V1] build_plot_from_csv('time,voltage\n')  (header-only single-line payload)
+  before : FileNotFoundError: [Errno 2] No such CSV file: 'time,voltage\n'
+  after  : ValueError: CSV source contains no numeric data rows
+[V1] build_plot_from_csv('0.0,1.0\n', has_header=False)  (valid one-point payload)
+  after  : renders OK (PNG 44,316 bytes)
+[R1] build_plot_from_csv('data,old.csv')  (missing path containing a delimiter)
+  before : FileNotFoundError: [Errno 2] No such CSV file: 'data,old.csv'
+  after  : FileNotFoundError: [Errno 2] No such CSV file: 'data,old.csv'
+[V2] build_plot_from_csv('t,V\n0,foo\n1,bar\n')  (x numeric, y unparseable -> all NaN)
+  before : NO ERROR - silently rendered PNG (39,994 bytes)
+  after  : ValueError: CSV source contains no finite y values to plot
+[R2] build_plot_from_csv('time,voltage\n')  (header-only file content)
+  before : FileNotFoundError: [Errno 2] No such CSV file: 'time,voltage\n'
+  after  : ValueError: CSV source contains no numeric data rows
+[V2] partial-NaN gap data 't,V\n0,\n1,2.0\n3,\n' still plots
+  after  : renders OK (PNG 61,984 bytes)
+[V3] build_waveform_plot()  (no arguments at all)
+  before : NO ERROR - silently rendered PNG (41,625 bytes)
+  after  : ValueError: No plot data provided: pass traces or x and y data
+[V3] build_waveform_plot(x=[1.0, 2.0, 3.0])  (x given, y omitted)
+  before : NO ERROR - silently rendered PNG (41,625 bytes)
+  after  : ValueError: No plot data provided: pass traces or x and y data
+[V4] build_plot_from_csv(file 'a,b', x_col=-1)
+  before : NO ERROR - silently rendered PNG (92,864 bytes)
+  after  : NO ERROR - silently rendered PNG (85,108 bytes)
+[V4] build_plot_from_csv(file 'a,b', x_col=5)  (out of range)
+  before : ValueError: CSV source contains no numeric data rows
+  after  : ValueError: x_col index 5 out of range for 2 CSV columns
+[V4] visual evidence written: v4_xcol_before.png (legend shows leaked 'b' trace) vs v4_xcol_after.png (single 'a' trace)
+[F2] build_plot_from_csv('/tmp/typo.csv')  (missing path)
+  before : FileNotFoundError: [Errno 2] No such CSV file: '/tmp/typo.csv'
+  after  : FileNotFoundError: [Errno 2] No such CSV file: '/tmp/typo.csv'
+[F2] build_plot_from_csv(directory)  (path is a directory)
+  before : FileNotFoundError: [Errno 2] No such CSV file: '/tmp'
+  after  : FileNotFoundError: [Errno 2] No such CSV file: '/tmp'
