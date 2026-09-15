@@ -1,0 +1,20 @@
+== 1. Built DocumentSpec via DocumentBuilder (explicit 'style': null on two blocks)
+text block   : {'type': 'text', 'style': 'body', 'text': 'explicit null style == omitted'}
+table block  : {'type': 'table', 'caption': None, 'headers': ['Rail'], 'rows': [['3V3']], 'style': 'grid'}
+
+== 2. render() with a hostile engine that mutates the document dict it receives
+engine wrote       : /tmp/presenter-e2e-out/ldo-datasheet.docx | exists: True
+doc handed to eng. : title: ACME LDO-3V3 Datasheet | table rows: [['Output voltage', 3.234, 3.3, 3.366, 'V'], ['Dropout', None, 150, 250, 'mV']]
+caller spec intact : [['Output voltage', 3.234, 3.3, 3.366, 'V'], ['Dropout', None, 150, 250, 'mV']]
+caller metadata    : {'part': 'LDO-3V3', 'tags': ['power', 'rev-a']} | caller title: ACME LDO-3V3 Datasheet
+
+== 3. Second render() hands the engine the same clean document again
+render #1 entry doc == render #2 entry doc : True
+rows still 2, headers still 5              : True True
+title still original, metadata clean       : True True
+
+== 4. Unregistered real engines surface as EngineNotImplementedError stubs
+EngineNotImplementedError: no 'pptx' engine is registered: the PPTX render engine (presenter/render_pptx/) has not  ...
+
+== 5. to_json() -> from_json() round-trips the document losslessly: True
+ALL END-TO-END CHECKS PASSED
