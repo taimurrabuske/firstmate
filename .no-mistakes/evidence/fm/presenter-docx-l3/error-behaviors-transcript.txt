@@ -1,0 +1,23 @@
+== 1. over-wide table row is rejected, naming the row index ==
+$ render(headers=[X, Y], rows=[[1, 2], [a, b, c]])
+  -> ValueError: table row 1 has 3 cells, more than the 2 header columns
+
+== 2. short rows are still padded to header width (kept behavior) ==
+$ render(headers=[X, Y, Z], rows=[[1, 2]]  (row shorter than headers))
+  -> OK  summary={'format': 'docx', 'output_path': '/tmp/presenter-errors-9eavskwd/attempt-2.docx', 'template': None, 'blocks_rendered': 1}
+
+  verify: padded cell (row1,col2) text = ''
+
+== 3. artifact IS mapped but mapped file is missing -> error names the mapped path ==
+$ render(source='artifact:wave-01', artifacts={'artifact:wave-01': '/.../missing-target.png'})
+  -> FileNotFoundError: picture source 'artifact:wave-01' maps to '/tmp/presenter-errors-9eavskwd/missing-target.png' in binding['artifacts'] but that file does not exist
+
+== 4. artifact NOT mapped at all -> error still says 'not mapped' ==
+$ render(source='artifact:unknown', artifacts={})
+  -> FileNotFoundError: picture source not found on disk and not mapped in binding['artifacts']: 'artifact:unknown'
+
+== 5. missing template path raises instead of silently falling back to blank ==
+$ render(template='<nonexistent>.docx')
+  -> PackageNotFoundError: Package not found at '/tmp/presenter-errors-9eavskwd/no-such-template.docx'
+
+  verify: every failed render raised before writing its output file: True
