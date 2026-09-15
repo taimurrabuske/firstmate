@@ -116,9 +116,7 @@ def inventory_pptx_template(path: str | Path) -> dict[str, Any]:
     for index, master in enumerate(presentation.slide_masters):
         layouts, placeholders = _master_layouts(master)
         theme = _theme_styles(master)
-        masters.append(
-            {"name": master.name, "layouts": layouts, "theme": theme}
-        )
+        masters.append({"name": master.name, "layouts": layouts, "theme": theme})
         if index == 0:
             first_layouts = layouts
             first_placeholders = placeholders

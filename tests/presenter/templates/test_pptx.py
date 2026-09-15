@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 from pptx import Presentation
-from pptx.opc.constants import CONTENT_TYPE, RELATIONSHIP_TYPE as RT
+from pptx.opc.constants import CONTENT_TYPE
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.opc.package import Part
 from pptx.opc.packuri import PackURI
 from pptx.oxml.ns import qn
@@ -14,7 +15,6 @@ from pptx.parts.slide import SlideLayoutPart, SlideMasterPart
 
 from presenter.templates.binding import validate_binding
 from presenter.templates.pptx import inventory_pptx_template
-
 
 _OFFICE_NS = (
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
