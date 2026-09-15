@@ -114,9 +114,7 @@ def test_table_row_wider_than_headers_raises(tmp_path: Path) -> None:
 
 
 def test_table_without_headers_uses_row_shape(tmp_path: Path) -> None:
-    slide = _render_table(
-        {"type": "table", "rows": [["a", "b"], ["c", "d"]]}, tmp_path
-    )
+    slide = _render_table({"type": "table", "rows": [["a", "b"], ["c", "d"]]}, tmp_path)
     (table,) = [shape.table for shape in _table_shapes(slide)]
     assert (len(table.rows), len(table.columns)) == (2, 2)
     assert table.cell(0, 1).text == "b"
