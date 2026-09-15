@@ -9,6 +9,6 @@ canonical block and TemplateBinding contracts.  ``presenter.core`` holds
 the specification model, block validation, and the render entry point.
 """
 
-__version__ = "0.1.0"
+__version__ = "2026.9.0"
 
 __all__ = ["__version__"]
