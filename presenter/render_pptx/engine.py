@@ -1,0 +1,534 @@
+"""Render presenter content blocks into a .pptx slide deck.
+
+The engine takes plain JSON-serializable block dicts (the shared presenter
+block contract) and an optional TemplateBinding dict (schema owned by
+``presenter.templates``), and writes a .pptx file via python-pptx.
+
+Block types handled:
+
+- ``text``: a paragraph with the logical style (``body`` | ``heading1`` |
+  ``heading2`` | ``caption``). ``heading1`` fills the slide's ``title``
+  placeholder, ``body`` fills the slide's ``body`` placeholder (appending a
+  paragraph when the block is not the first), and ``heading2``/``caption``
+  become text boxes. Placeholder candidates are resolved through
+  ``binding["layouts"]`` (layout name -> placeholder name -> role) first and
+  the placeholder's own type second, mirroring the role vocabulary of
+  ``presenter.templates.pptx``.
+- ``table``: header row (bold) plus data rows as a table. ``style`` maps
+  ``grid`` to a bold first row with no banding, ``striped`` to a bold first
+  row with horizontal banding, and ``plain`` to neither. A ``table``-role
+  placeholder is used when present; otherwise a table shape is placed in the
+  content flow. The caption paragraph is placed above the table.
+- ``image`` / ``plot``: picture inserted from the block ``source`` (a
+  filesystem path, or an artifact reference looked up in
+  ``binding["artifacts"]`` when the literal path does not exist), honoring
+  ``width_in``. Without ``width_in`` a ``picture``-role placeholder is used
+  when present. The caption paragraph is placed below the picture.
+- ``equation``: when the block carries an ``image`` key, that pre-rendered
+  picture is inserted; otherwise the ``latex`` string falls back to a
+  monospace text box sized by ``font_size_pt``.
+- ``toc``: a section-divider slide. On a slide that already carries content
+  it starts a new divider slide; on an untouched slide it stays there.
+- ``pagebreak``: a new slide.
+
+Slide flow starts on one new slide and continues across slides as the
+``toc`` and ``pagebreak`` blocks direct; free shapes (text boxes, tables,
+pictures) stack downward in the content flow of the current slide.
+
+Slides use the first layout, searched master by master, that offers a
+``body``-role placeholder; the theme fonts from ``binding["styles"]`` size
+free text boxes. A binding that names a template file starts from it (its
+existing slides are preserved and content is appended); an empty or absent
+``template`` starts from a default presentation. A template path that does
+not exist raises (python-pptx ``PackageNotFoundError``) rather than
+silently falling back.
+
+No other presenter subpackage is imported: blocks and binding arrive as
+plain dicts. ``render`` returns a plain summary dict; ``render_document``
+implements the ``presenter.core.render`` engine contract and returns the
+written path.
+"""
+
+from __future__ import annotations
+
+import math
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
+
+from pptx import Presentation
+from pptx.util import Emu, Inches, Pt
+
+__all__ = ["render", "render_document"]
+
+Block = Mapping[str, Any]
+Binding = Mapping[str, Any]
+
+#: EMU per point and per inch, for geometry arithmetic.
+_EMU_PER_INCH = 914400
+
+#: Slide margin and vertical gap for shapes placed in the content flow.
+_MARGIN = Inches(0.5)
+_GAP = Inches(0.2)
+_MIN_TABLE_ROW_HEIGHT = Inches(0.4)
+
+#: Logical text-style name -> point size for free text boxes.
+_TEXT_BOX_FONT_PT = {"heading1": 28.0, "heading2": 20.0, "body": 18.0, "caption": 12.0}
+
+#: Table-style keyword -> (bold first row, horizontal banding).
+_TABLE_BANDING = {
+    "grid": (True, False),
+    "striped": (True, True),
+    "plain": (False, False),
+}
+
+# Placeholder-type names -> render-engine-facing role. Mirrors the role
+# vocabulary of presenter.templates.pptx so both lanes agree on what a
+# binding's "layouts" mapping can name; defined locally because engines do
+# not import sibling subpackages.
+_ROLE_BY_PLACEHOLDER_TYPE = {
+    "TITLE": "title",
+    "CENTER_TITLE": "title",
+    "SUBTITLE": "subtitle",
+    "BODY": "body",
+    "OBJECT": "body",
+    "PICTURE": "picture",
+    "TABLE": "table",
+    "CHART": "chart",
+    "DATE": "date",
+    "FOOTER": "footer",
+    "SLIDE_NUMBER": "slide_number",
+    "HEADER": "header",
+}
+
+_Handler = Callable[["DeckWriter", Block], None]
+
+
+def render(
+    blocks: Sequence[Block],
+    binding: Binding | None,
+    output_path: str | Path,
+) -> dict[str, Any]:
+    """Render ``blocks`` into a .pptx deck at ``output_path``.
+
+    Returns a plain JSON-serializable summary dict with ``format``,
+    ``output_path``, ``template`` (path or None), and ``blocks_rendered``.
+    """
+    writer, template = _open_deck(binding)
+    writer.new_slide()
+    rendered = 0
+    for block in blocks:
+        writer.render_block(block)
+        rendered += 1
+    output = _save(writer.presentation, output_path)
+    return {
+        "format": "pptx",
+        "output_path": str(output),
+        "template": str(template) if template else None,
+        "blocks_rendered": rendered,
+    }
+
+
+def render_document(
+    document: Mapping[str, Any],
+    binding: Binding | None,
+    output_path: str | Path,
+) -> Path:
+    """Render a normalized ``DocumentSpec`` dict as a deck.
+
+    This is the engine callable registered into ``presenter.core.render``.
+    Each entry of ``document["slides"]`` becomes exactly one slide: its
+    ``title`` fills the slide's title placeholder, its ``layout`` names the
+    slide layout (an unknown name raises), its ``notes`` becomes the slide's
+    speaker notes, and its ``blocks`` render onto the slide through the same
+    block handlers as :func:`render`.
+    """
+    writer, _template = _open_deck(binding)
+    for slide_spec in document.get("slides") or []:
+        writer.new_slide(
+            layout_name=slide_spec.get("layout"), title=slide_spec.get("title")
+        )
+        notes = slide_spec.get("notes")
+        if notes:
+            writer.set_notes(notes)
+        for block in slide_spec.get("blocks") or []:
+            writer.render_block(block)
+    return _save(writer.presentation, output_path)
+
+
+def _open_deck(binding: Binding | None) -> tuple[DeckWriter, str | None]:
+    resolved: Binding = binding or {}
+    fmt = resolved.get("format")
+    if fmt is not None and fmt != "pptx":
+        raise ValueError(f"pptx renderer requires binding format 'pptx', got {fmt!r}")
+    template = resolved.get("template")
+    if template:
+        prs = Presentation(str(template))
+    else:
+        prs = Presentation()
+    return DeckWriter(prs, resolved), template
+
+
+def _save(prs: Presentation, output_path: str | Path) -> Path:
+    output = Path(output_path)
+    if output.parent and str(output.parent):
+        output.parent.mkdir(parents=True, exist_ok=True)
+    prs.save(str(output))
+    return output
+
+
+def _estimate_box_height(text: str, width: int, font_pt: float) -> int:
+    """Rough wrapped-height estimate (EMU) for a text box of ``width``."""
+    chars_per_line = max(8, int(width / _EMU_PER_INCH * 72 / (font_pt * 0.5)))
+    lines = max(1, math.ceil(len(text) / chars_per_line))
+    return int(lines * font_pt * 1.4 * 12700) + _EMU_PER_INCH // 10
+
+
+class DeckWriter:
+    """Slide-flow writer shared by :func:`render` and :func:`render_document`."""
+
+    def __init__(self, prs: Presentation, binding: Binding) -> None:
+        self._prs = prs
+        self._binding = binding
+        styles = binding.get("styles")
+        theme = styles.get("theme") if isinstance(styles, Mapping) else None
+        fonts = theme.get("fonts") if isinstance(theme, Mapping) else None
+        self._theme_fonts: Mapping[str, Any] = (
+            fonts if isinstance(fonts, Mapping) else {}
+        )
+        self._layout_roles: Mapping[str, Any] = binding.get("layouts") or {}
+        self._slide: Any = None
+        self._slide_has_content = False
+        self._used_placeholder_idxs: set[int] = set()
+        self._cursor: int = int(_MARGIN)
+
+    @property
+    def presentation(self) -> Presentation:
+        return self._prs
+
+    # -- slide flow ---------------------------------------------------------
+
+    def new_slide(
+        self, layout_name: str | None = None, title: str | None = None
+    ) -> None:
+        """Start a new slide, optionally on a named layout with a title."""
+        layout = self._resolve_layout(layout_name)
+        self._slide = self._prs.slides.add_slide(layout)
+        self._slide_has_content = False
+        self._used_placeholder_idxs = set()
+        self._cursor = int(_MARGIN)
+        if title:
+            placeholder = self._take_placeholder("title")
+            if placeholder is not None:
+                placeholder.text = str(title)
+
+    def set_notes(self, notes: str) -> None:
+        """Set the current slide's speaker notes."""
+        self._slide.notes_slide.notes_text_frame.text = str(notes)
+
+    def render_block(self, block: Block) -> None:
+        block_type = block.get("type")
+        handler = _HANDLERS.get(block_type)  # type: ignore[arg-type]
+        if handler is None:
+            raise ValueError(f"unsupported block type: {block_type!r}")
+        handler(self, block)
+
+    def _iter_layouts(self) -> Any:
+        for master in self._prs.slide_masters:
+            yield from master.slide_layouts
+
+    def _resolve_layout(self, layout_name: str | None) -> Any:
+        if layout_name:
+            for layout in self._iter_layouts():
+                if layout.name == layout_name:
+                    return layout
+            raise ValueError(f"template has no slide layout named {layout_name!r}")
+        for layout in self._iter_layouts():
+            if any(
+                self._placeholder_role(layout, ph) == "body"
+                for ph in layout.placeholders
+            ):
+                return layout
+        return next(self._iter_layouts())
+
+    def _placeholder_role(self, layout: Any, placeholder: Any) -> str:
+        roles = self._layout_roles.get(layout.name)
+        if isinstance(roles, Mapping):
+            role = roles.get(placeholder.name)
+            if isinstance(role, str) and role:
+                return role
+        placeholder_type = placeholder.placeholder_format.type
+        type_name = placeholder_type.name if placeholder_type is not None else ""
+        return _ROLE_BY_PLACEHOLDER_TYPE.get(type_name, type_name.lower())
+
+    def _take_placeholder(self, role: str) -> Any:
+        """Claim the first unused placeholder with ``role`` for one fill."""
+        layout = self._slide.slide_layout
+        for placeholder in self._slide.placeholders:
+            idx = placeholder.placeholder_format.idx
+            if idx in self._used_placeholder_idxs:
+                continue
+            if self._placeholder_role(layout, placeholder) == role:
+                self._used_placeholder_idxs.add(idx)
+                return placeholder
+        return None
+
+    def _find_placeholder(self, role: str) -> Any:
+        """Return the current slide's first placeholder with ``role``.
+
+        Unlike :meth:`_take_placeholder` this ignores single-use claims: a
+        slide's body placeholder accumulates one paragraph per body block.
+        """
+        layout = self._slide.slide_layout
+        for placeholder in self._slide.placeholders:
+            if self._placeholder_role(layout, placeholder) == role:
+                return placeholder
+        return None
+
+    # -- text ---------------------------------------------------------------
+
+    def _add_text(self, block: Block) -> None:
+        style = str(block.get("style") or "body")
+        text = str(block.get("text") or "")
+        if style == "heading1":
+            placeholder = self._take_placeholder("title")
+            if placeholder is not None:
+                # A title fill does not count as slide content, so a slide
+                # titled before a toc block stays that slide's divider.
+                placeholder.text = text
+                return
+        elif style == "body":
+            placeholder = self._find_placeholder("body")
+            if placeholder is not None:
+                self._append_body_text(placeholder, text)
+                self._slide_has_content = True
+                return
+        self._add_text_box(text, style)
+        self._slide_has_content = True
+
+    @staticmethod
+    def _append_body_text(placeholder: Any, text: str) -> None:
+        frame = placeholder.text_frame
+        if frame.text:
+            frame.add_paragraph().text = text
+        else:
+            frame.text = text
+
+    def _add_text_box(self, text: str, style: str) -> None:
+        font_pt = _TEXT_BOX_FONT_PT.get(style, 18.0)
+        width = self._content_width()
+        box = self._slide.shapes.add_textbox(
+            _MARGIN, self._cursor, width, _estimate_box_height(text, width, font_pt)
+        )
+        frame = box.text_frame
+        frame.word_wrap = True
+        frame.text = text
+        self._style_text_box_run(frame, style, font_pt)
+        self._cursor += int(box.height) + int(_GAP)
+
+    def _style_text_box_run(self, frame: Any, style: str, font_pt: float) -> None:
+        runs = frame.paragraphs[0].runs
+        if not runs:
+            return
+        font = runs[0].font
+        font.size = Pt(font_pt)
+        font.bold = style in ("heading1", "heading2")
+        font.italic = style == "caption"
+        font_role = "major" if style in ("heading1", "heading2") else "minor"
+        typeface = self._theme_fonts.get(font_role)
+        if isinstance(typeface, str) and typeface:
+            font.name = typeface
+
+    def _add_caption_box(self, text: str, width: int | None = None) -> None:
+        box_width = int(width) if width else self._content_width()
+        box = self._slide.shapes.add_textbox(
+            _MARGIN,
+            self._cursor,
+            box_width,
+            _estimate_box_height(text, box_width, 12.0),
+        )
+        frame = box.text_frame
+        frame.word_wrap = True
+        frame.text = text
+        self._style_text_box_run(frame, "caption", 12.0)
+        self._cursor += int(box.height) + int(_GAP)
+
+    # -- table ---------------------------------------------------------------
+
+    def _add_table(self, block: Block) -> None:
+        headers = [str(header) for header in (block.get("headers") or [])]
+        rows = [
+            ["" if value is None else str(value) for value in row]
+            for row in (block.get("rows") or [])
+        ]
+        if headers:
+            for row_index, row in enumerate(rows):
+                if len(row) > len(headers):
+                    raise ValueError(
+                        f"table row {row_index} has {len(row)} cells, more than "
+                        f"the {len(headers)} header columns"
+                    )
+        caption = block.get("caption")
+        if caption:
+            self._add_caption_box(str(caption))
+
+        ncols = len(headers) if headers else max((len(row) for row in rows), default=0)
+        nrows = (1 if headers else 0) + len(rows)
+        if ncols == 0 or nrows == 0:
+            return
+
+        table, anchor = self._place_table(nrows, ncols)
+        first_row, banding = _TABLE_BANDING.get(
+            str(block.get("style") or "grid"), (True, False)
+        )
+        table.first_row = first_row
+        table.horz_banding = banding
+
+        first_data_row = 0
+        if headers:
+            for col, header in enumerate(headers):
+                cell = table.cell(0, col)
+                cell.text = header
+                runs = cell.text_frame.paragraphs[0].runs
+                if runs:
+                    runs[0].font.bold = True
+            first_data_row = 1
+
+        for row_index, row in enumerate(rows):
+            for col in range(ncols):
+                table.cell(first_data_row + row_index, col).text = (
+                    row[col] if col < len(row) else ""
+                )
+        self._slide_has_content = True
+        self._advance_past(anchor)
+
+    def _place_table(self, nrows: int, ncols: int) -> tuple[Any, Any]:
+        placeholder = self._take_placeholder("table")
+        if placeholder is not None and hasattr(placeholder, "insert_table"):
+            return placeholder.insert_table(nrows, ncols), placeholder
+        frame = self._slide.shapes.add_table(
+            nrows,
+            ncols,
+            _MARGIN,
+            self._cursor,
+            self._content_width(),
+            int(_MIN_TABLE_ROW_HEIGHT) * nrows,
+        )
+        return frame.table, frame
+
+    # -- pictures ------------------------------------------------------------
+
+    def _add_picture_block(self, block: Block) -> None:
+        source = block.get("source")
+        if not source:
+            raise ValueError(f"{block.get('type')!r} block requires a 'source' key")
+        resolved = _resolve_picture_source(str(source), self._binding)
+        width_in = block.get("width_in")
+        width = Emu(int(Inches(float(width_in)))) if width_in is not None else None
+        if width is None:
+            placeholder = self._take_placeholder("picture")
+            if placeholder is not None and hasattr(placeholder, "insert_picture"):
+                picture = placeholder.insert_picture(str(resolved))
+                self._finish_picture(picture, block)
+                return
+        picture = self._slide.shapes.add_picture(
+            str(resolved), _MARGIN, self._cursor, width=width
+        )
+        content_width = self._content_width()
+        if picture.width > content_width:
+            scale = content_width / picture.width
+            picture.width = int(picture.width * scale)
+            picture.height = int(picture.height * scale)
+        self._finish_picture(picture, block)
+
+    def _finish_picture(self, picture: Any, block: Block) -> None:
+        self._slide_has_content = True
+        self._advance_past(picture)
+        caption = block.get("caption")
+        if caption:
+            self._add_caption_box(str(caption), width=int(picture.width))
+
+    def _add_equation(self, block: Block) -> None:
+        image = block.get("image")
+        if image:
+            resolved = _resolve_picture_source(str(image), self._binding)
+            picture = self._slide.shapes.add_picture(
+                str(resolved), _MARGIN, self._cursor
+            )
+            content_width = self._content_width()
+            if picture.width > content_width:
+                scale = content_width / picture.width
+                picture.width = int(picture.width * scale)
+                picture.height = int(picture.height * scale)
+            self._slide_has_content = True
+            self._advance_past(picture)
+            return
+        latex = str(block.get("latex") or "")
+        font_size_pt = block.get("font_size_pt")
+        font_pt = float(font_size_pt) if font_size_pt is not None else 18.0
+        width = self._content_width()
+        box = self._slide.shapes.add_textbox(
+            _MARGIN, self._cursor, width, _estimate_box_height(latex, width, font_pt)
+        )
+        frame = box.text_frame
+        frame.word_wrap = True
+        frame.text = latex
+        runs = frame.paragraphs[0].runs
+        if runs:
+            runs[0].font.name = "Courier New"
+            runs[0].font.size = Pt(font_pt)
+        self._slide_has_content = True
+        self._cursor += int(box.height) + int(_GAP)
+
+    # -- slide-boundary blocks ------------------------------------------------
+
+    def _add_toc(self, block: Block) -> None:
+        if self._slide_has_content:
+            self.new_slide()
+
+    def _add_pagebreak(self, block: Block) -> None:
+        self.new_slide()
+
+    # -- geometry -------------------------------------------------------------
+
+    def _content_width(self) -> int:
+        return int(self._prs.slide_width) - 2 * int(_MARGIN)
+
+    def _advance_past(self, shape: Any) -> None:
+        self._cursor = max(self._cursor, int(shape.top) + int(shape.height) + int(_GAP))
+
+
+def _resolve_picture_source(source: str, binding: Binding) -> Path:
+    """Resolve a picture source to an existing file.
+
+    A literal filesystem path wins; otherwise the source is treated as an
+    artifact reference looked up in ``binding["artifacts"]`` (the
+    forward-compatible hook for the artifact source lane).
+    """
+    path = Path(source)
+    if path.is_file():
+        return path
+    artifacts = binding.get("artifacts") or {}
+    if isinstance(artifacts, Mapping):
+        mapped = artifacts.get(source)
+        if isinstance(mapped, (str, Path)):
+            mapped_path = Path(mapped)
+            if mapped_path.is_file():
+                return mapped_path
+            raise FileNotFoundError(
+                f"picture source {source!r} maps to {str(mapped_path)!r} in "
+                "binding['artifacts'] but that file does not exist"
+            )
+    raise FileNotFoundError(
+        f"picture source not found on disk and not mapped in binding['artifacts']: {source!r}"
+    )
+
+
+_HANDLERS: dict[str, _Handler] = {
+    "text": DeckWriter._add_text,
+    "table": DeckWriter._add_table,
+    "image": DeckWriter._add_picture_block,
+    "plot": DeckWriter._add_picture_block,
+    "equation": DeckWriter._add_equation,
+    "toc": DeckWriter._add_toc,
+    "pagebreak": DeckWriter._add_pagebreak,
+}
