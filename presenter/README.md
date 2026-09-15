@@ -13,6 +13,7 @@ The block contract and the TemplateBinding contract below are the canonical text
 - `presenter/templates/` - corporate template ingestion and master binding; produces TemplateBinding files.
 - `presenter/render_docx/` - the DOCX datasheet render engine.
 - `presenter/blocks/` and `presenter/artifacts.py` - technical content block generators and the artifact source that image and plot blocks reference.
+- `presenter/layouts/` - convenience functions building common design-review slide layouts from those blocks.
 
 Every package above is landed and composes into one working pipeline; the PPTX render engine (`presenter/render_pptx/`) is the only slot still a stub.
 `examples/datasheet_demo.py` is the runnable, end-to-end version of the shape below: it binds a fixture `.docx` template, assembles a spec from every block type including a table, a plot, and an equation, and renders a real `.docx` file.
@@ -88,6 +89,36 @@ Shared TemplateBinding contract (JSON file, schema owned by the template lane):
 
 `presenter.core.render.validate_binding` checks only the top-level shape it dispatches on: `format` must name a registered format, `template` must be a non-empty path string, `name` a string when present, and `layouts`, `placeholders`, and `styles` mappings when present.
 The meaning of those mappings belongs to `presenter/templates/`.
+
+## Layout convenience functions
+
+`presenter.layouts` builds common design-review slides in one call instead of
+hand-placed blocks: `title_bullets`, `title_single_image`,
+`split_half_text_images`, `two_column_bullets`, `bullets_and_table`, and
+`image_grid`.
+
+Library principle: prefer native PowerPoint features and layouts over
+reinventing what the format already provides.
+Each function selects the closest native PowerPoint slide layout (`"Title
+and Content"`, `"Two Content"`, `"Comparison"`, `"Picture with Caption"`) for
+the render engine to resolve against a binding's `layouts`/`placeholders`,
+and only falls back to custom placement (`image_grid`, an arbitrary N-up
+grid no native layout offers) when no native layout fits the requested
+shape.
+
+Every function returns one plain dict shaped like a `SlideSpec`
+(`title`/`layout`/`notes`/`blocks`) plus a forward-compatible
+`placeholder_roles` map from native placeholder role name to the indices in
+`blocks` that belong there; the slide's own `title` field always carries the
+title placeholder and is never repeated in `blocks` or `placeholder_roles`.
+Like `presenter.blocks`, this package takes no `presenter.core` import and
+accepts plain strings and paths, but every block it returns has exactly the
+shape `presenter.core.blocks` would produce.
+`blocks` is already in top-to-bottom reading order, so it degrades
+gracefully to a DOCX section by simple vertical stacking (`layout` and
+`placeholder_roles` are ignored); mapping them onto real PPTX placeholders
+is render-engine work, not this package's.
+See `presenter/layouts/slides.py` for the full per-function contract.
 
 ## End-to-end example
 
