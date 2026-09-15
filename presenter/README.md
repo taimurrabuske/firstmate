@@ -80,6 +80,12 @@ Validation rules layered on that contract by `presenter.core.blocks`:
 - An equation's optional `image` names a pre-rendered picture (a filesystem path or artifact reference, resolved the same way as an `image`/`plot` block's `source`) to insert in place of the raw LaTeX string; `presenter.blocks.equation` populates it.
 - Keys outside the contract are rejected, so a misspelled field fails validation instead of being ignored.
 
+## Markdown input
+
+`presenter.markdown` converts rich-text Markdown into content blocks in one call.
+`markdown_to_blocks(text)` parses a GFM subset - ATX headings, pipe tables with column alignments, bullet and numbered lists, fenced code, images, block quotes, thematic breaks (as page breaks), and plain paragraphs - and returns validated blocks per the contract above; `markdown_file(path)` reads a file first and delegates.
+The parser is pure standard library; the supported subset and its limitations are documented in the `presenter.markdown` module docstring.
+
 ## TemplateBinding contract
 
 Shared TemplateBinding contract (JSON file, schema owned by the template lane):
