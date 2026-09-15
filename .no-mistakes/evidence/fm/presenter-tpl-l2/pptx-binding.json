@@ -1,0 +1,562 @@
+{
+  "format": "pptx",
+  "layouts": {
+    "Blank": {
+      "Date Placeholder 1": "date",
+      "Footer Placeholder 2": "footer",
+      "Slide Number Placeholder 3": "slide_number"
+    },
+    "Comparison": {
+      "Content Placeholder 3": "body",
+      "Content Placeholder 5": "body",
+      "Date Placeholder 6": "date",
+      "Footer Placeholder 7": "footer",
+      "Slide Number Placeholder 8": "slide_number",
+      "Text Placeholder 2": "body",
+      "Text Placeholder 4": "body",
+      "Title 1": "title"
+    },
+    "Content with Caption": {
+      "Content Placeholder 2": "body",
+      "Date Placeholder 4": "date",
+      "Footer Placeholder 5": "footer",
+      "Slide Number Placeholder 6": "slide_number",
+      "Text Placeholder 3": "body",
+      "Title 1": "title"
+    },
+    "Picture with Caption": {
+      "Date Placeholder 4": "date",
+      "Footer Placeholder 5": "footer",
+      "Picture Placeholder 2": "picture",
+      "Slide Number Placeholder 6": "slide_number",
+      "Text Placeholder 3": "body",
+      "Title 1": "title"
+    },
+    "Section Header": {
+      "Date Placeholder 3": "date",
+      "Footer Placeholder 4": "footer",
+      "Slide Number Placeholder 5": "slide_number",
+      "Text Placeholder 2": "body",
+      "Title 1": "title"
+    },
+    "Title Only": {
+      "Date Placeholder 2": "date",
+      "Footer Placeholder 3": "footer",
+      "Slide Number Placeholder 4": "slide_number",
+      "Title 1": "title"
+    },
+    "Title Slide": {
+      "Date Placeholder 3": "date",
+      "Footer Placeholder 4": "footer",
+      "Slide Number Placeholder 5": "slide_number",
+      "Subtitle 2": "subtitle",
+      "Title 1": "title"
+    },
+    "Title and Content": {
+      "Content Placeholder 2": "body",
+      "Date Placeholder 3": "date",
+      "Footer Placeholder 4": "footer",
+      "Slide Number Placeholder 5": "slide_number",
+      "Title 1": "title"
+    },
+    "Title and Vertical Text": {
+      "Date Placeholder 3": "date",
+      "Footer Placeholder 4": "footer",
+      "Slide Number Placeholder 5": "slide_number",
+      "Title 1": "title",
+      "Vertical Text Placeholder 2": "body"
+    },
+    "Two Content": {
+      "Content Placeholder 2": "body",
+      "Content Placeholder 3": "body",
+      "Date Placeholder 4": "date",
+      "Footer Placeholder 5": "footer",
+      "Slide Number Placeholder 6": "slide_number",
+      "Title 1": "title"
+    },
+    "Vertical Title and Text": {
+      "Date Placeholder 3": "date",
+      "Footer Placeholder 4": "footer",
+      "Slide Number Placeholder 5": "slide_number",
+      "Vertical Text Placeholder 2": "body",
+      "Vertical Title 1": "title"
+    }
+  },
+  "masters": [
+    {
+      "layouts": {
+        "Blank": {
+          "Date Placeholder 1": "date",
+          "Footer Placeholder 2": "footer",
+          "Slide Number Placeholder 3": "slide_number"
+        },
+        "Comparison": {
+          "Content Placeholder 3": "body",
+          "Content Placeholder 5": "body",
+          "Date Placeholder 6": "date",
+          "Footer Placeholder 7": "footer",
+          "Slide Number Placeholder 8": "slide_number",
+          "Text Placeholder 2": "body",
+          "Text Placeholder 4": "body",
+          "Title 1": "title"
+        },
+        "Content with Caption": {
+          "Content Placeholder 2": "body",
+          "Date Placeholder 4": "date",
+          "Footer Placeholder 5": "footer",
+          "Slide Number Placeholder 6": "slide_number",
+          "Text Placeholder 3": "body",
+          "Title 1": "title"
+        },
+        "Picture with Caption": {
+          "Date Placeholder 4": "date",
+          "Footer Placeholder 5": "footer",
+          "Picture Placeholder 2": "picture",
+          "Slide Number Placeholder 6": "slide_number",
+          "Text Placeholder 3": "body",
+          "Title 1": "title"
+        },
+        "Section Header": {
+          "Date Placeholder 3": "date",
+          "Footer Placeholder 4": "footer",
+          "Slide Number Placeholder 5": "slide_number",
+          "Text Placeholder 2": "body",
+          "Title 1": "title"
+        },
+        "Title Only": {
+          "Date Placeholder 2": "date",
+          "Footer Placeholder 3": "footer",
+          "Slide Number Placeholder 4": "slide_number",
+          "Title 1": "title"
+        },
+        "Title Slide": {
+          "Date Placeholder 3": "date",
+          "Footer Placeholder 4": "footer",
+          "Slide Number Placeholder 5": "slide_number",
+          "Subtitle 2": "subtitle",
+          "Title 1": "title"
+        },
+        "Title and Content": {
+          "Content Placeholder 2": "body",
+          "Date Placeholder 3": "date",
+          "Footer Placeholder 4": "footer",
+          "Slide Number Placeholder 5": "slide_number",
+          "Title 1": "title"
+        },
+        "Title and Vertical Text": {
+          "Date Placeholder 3": "date",
+          "Footer Placeholder 4": "footer",
+          "Slide Number Placeholder 5": "slide_number",
+          "Title 1": "title",
+          "Vertical Text Placeholder 2": "body"
+        },
+        "Two Content": {
+          "Content Placeholder 2": "body",
+          "Content Placeholder 3": "body",
+          "Date Placeholder 4": "date",
+          "Footer Placeholder 5": "footer",
+          "Slide Number Placeholder 6": "slide_number",
+          "Title 1": "title"
+        },
+        "Vertical Title and Text": {
+          "Date Placeholder 3": "date",
+          "Footer Placeholder 4": "footer",
+          "Slide Number Placeholder 5": "slide_number",
+          "Vertical Text Placeholder 2": "body",
+          "Vertical Title 1": "title"
+        }
+      },
+      "name": "Standard Master",
+      "theme": {
+        "colors": {
+          "accent1": "4F81BD",
+          "accent2": "C0504D",
+          "accent3": "9BBB59",
+          "accent4": "8064A2",
+          "accent5": "4BACC6",
+          "accent6": "F79646",
+          "dk1": "000000",
+          "dk2": "1F497D",
+          "folHlink": "800080",
+          "hlink": "0000FF",
+          "lt1": "FFFFFF",
+          "lt2": "EEECE1"
+        },
+        "fonts": {
+          "major": "Calibri",
+          "minor": "Calibri"
+        }
+      }
+    },
+    {
+      "layouts": {
+        "Dark Title Slide": {
+          "Dark Title": "title"
+        }
+      },
+      "name": "Corporate Dark Master",
+      "theme": {
+        "colors": {
+          "accent1": "00B0F0",
+          "accent2": "C0504D",
+          "accent3": "9BBB59",
+          "accent4": "8064A2",
+          "accent5": "4BACC6",
+          "accent6": "F79646",
+          "dk1": "000000",
+          "dk2": "1F497D",
+          "folHlink": "800080",
+          "hlink": "0000FF",
+          "lt1": "FFFFFF",
+          "lt2": "EEECE1"
+        },
+        "fonts": {
+          "major": "Calibri",
+          "minor": "Calibri"
+        }
+      }
+    }
+  ],
+  "name": "corp_brand",
+  "placeholders": {
+    "Blank": [
+      {
+        "idx": 10,
+        "name": "Date Placeholder 1",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 2",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 3",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Comparison": [
+      {
+        "idx": 0,
+        "name": "Title 1",
+        "type": "TITLE"
+      },
+      {
+        "idx": 1,
+        "name": "Text Placeholder 2",
+        "type": "BODY"
+      },
+      {
+        "idx": 2,
+        "name": "Content Placeholder 3",
+        "type": "OBJECT"
+      },
+      {
+        "idx": 3,
+        "name": "Text Placeholder 4",
+        "type": "BODY"
+      },
+      {
+        "idx": 4,
+        "name": "Content Placeholder 5",
+        "type": "OBJECT"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 6",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 7",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 8",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Content with Caption": [
+      {
+        "idx": 0,
+        "name": "Title 1",
+        "type": "TITLE"
+      },
+      {
+        "idx": 1,
+        "name": "Content Placeholder 2",
+        "type": "OBJECT"
+      },
+      {
+        "idx": 2,
+        "name": "Text Placeholder 3",
+        "type": "BODY"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 4",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 5",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 6",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Picture with Caption": [
+      {
+        "idx": 0,
+        "name": "Title 1",
+        "type": "TITLE"
+      },
+      {
+        "idx": 1,
+        "name": "Picture Placeholder 2",
+        "type": "PICTURE"
+      },
+      {
+        "idx": 2,
+        "name": "Text Placeholder 3",
+        "type": "BODY"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 4",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 5",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 6",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Section Header": [
+      {
+        "idx": 0,
+        "name": "Title 1",
+        "type": "TITLE"
+      },
+      {
+        "idx": 1,
+        "name": "Text Placeholder 2",
+        "type": "BODY"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 3",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 4",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 5",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Title Only": [
+      {
+        "idx": 0,
+        "name": "Title 1",
+        "type": "TITLE"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 2",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 3",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 4",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Title Slide": [
+      {
+        "idx": 0,
+        "name": "Title 1",
+        "type": "CENTER_TITLE"
+      },
+      {
+        "idx": 1,
+        "name": "Subtitle 2",
+        "type": "SUBTITLE"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 3",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 4",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 5",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Title and Content": [
+      {
+        "idx": 0,
+        "name": "Title 1",
+        "type": "TITLE"
+      },
+      {
+        "idx": 1,
+        "name": "Content Placeholder 2",
+        "type": "OBJECT"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 3",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 4",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 5",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Title and Vertical Text": [
+      {
+        "idx": 0,
+        "name": "Title 1",
+        "type": "TITLE"
+      },
+      {
+        "idx": 1,
+        "name": "Vertical Text Placeholder 2",
+        "type": "BODY"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 3",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 4",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 5",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Two Content": [
+      {
+        "idx": 0,
+        "name": "Title 1",
+        "type": "TITLE"
+      },
+      {
+        "idx": 1,
+        "name": "Content Placeholder 2",
+        "type": "OBJECT"
+      },
+      {
+        "idx": 2,
+        "name": "Content Placeholder 3",
+        "type": "OBJECT"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 4",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 5",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 6",
+        "type": "SLIDE_NUMBER"
+      }
+    ],
+    "Vertical Title and Text": [
+      {
+        "idx": 0,
+        "name": "Vertical Title 1",
+        "type": "TITLE"
+      },
+      {
+        "idx": 1,
+        "name": "Vertical Text Placeholder 2",
+        "type": "BODY"
+      },
+      {
+        "idx": 10,
+        "name": "Date Placeholder 3",
+        "type": "DATE"
+      },
+      {
+        "idx": 11,
+        "name": "Footer Placeholder 4",
+        "type": "FOOTER"
+      },
+      {
+        "idx": 12,
+        "name": "Slide Number Placeholder 5",
+        "type": "SLIDE_NUMBER"
+      }
+    ]
+  },
+  "styles": {
+    "slide_size": {
+      "height_emu": 6858000,
+      "width_emu": 9144000
+    },
+    "theme": {
+      "colors": {
+        "accent1": "4F81BD",
+        "accent2": "C0504D",
+        "accent3": "9BBB59",
+        "accent4": "8064A2",
+        "accent5": "4BACC6",
+        "accent6": "F79646",
+        "dk1": "000000",
+        "dk2": "1F497D",
+        "folHlink": "800080",
+        "hlink": "0000FF",
+        "lt1": "FFFFFF",
+        "lt2": "EEECE1"
+      },
+      "fonts": {
+        "major": "Calibri",
+        "minor": "Calibri"
+      }
+    }
+  },
+  "template": "/tmp/tpl-evidence/corp_brand.pptx"
+}
