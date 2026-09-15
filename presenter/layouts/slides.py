@@ -13,12 +13,33 @@ to validate it, and it also stands alone as plain data.
 Library principle: prefer native PowerPoint layouts and placeholders over
 hand-placed geometry.  ``layout`` names the closest native slide layout
 (the kind already shipped in real PowerPoint masters, e.g. "Title and
-Content", "Two Content", "Comparison", "Picture with Caption") for the
-render engine to resolve against the ``TemplateBinding["layouts"]`` mapping
-documented in ``presenter/README.md``.  ``placeholder_roles`` then says
-which blocks are meant for which named region of that layout.  Custom
-placement (no native layout fits the requested shape) is used only for
-:func:`image_grid`, and is called out in its own docstring.
+Content", "Two Content", "Comparison", "Picture with Caption").
+``presenter.render_pptx`` already resolves this today: ``render_document``
+looks the name up by exact match against the bound template's slide
+masters (``DeckWriter._resolve_layout``), so picking the right ``layout``
+value is load-bearing now, not just forward-looking.  Custom placement (no
+native layout fits the requested shape) is used only for :func:`image_grid`,
+and is called out in its own docstring.
+
+``placeholder_roles`` says which blocks are meant for which named region of
+that layout.  Today's ``presenter.render_pptx`` only claims placeholders by
+a fixed, block-type-driven role vocabulary - "title" (a ``heading1`` text
+block, handled automatically and never listed here), "body" (every
+``body``-style text block on a slide, merged into the *first* body-role
+placeholder it finds), "picture" (an image/plot block with no
+``width_in``), and "table" (a table block) - and it has no way yet to
+address two same-typed placeholders on one slide separately.  So a region
+label like ``"left"``/``"right"``/``"grid"`` is this function's own
+intended grouping, not yet a role the engine or a generated TemplateBinding
+distinguishes: on a native "Two Content" layout, whose two placeholders
+today both carry the auto-derived role "body", every body-style block from
+both regions currently lands in that same one placeholder in the order
+given, and an image without ``width_in`` falls back to a free-floating
+picture in the content flow because "Two Content" has no picture-role
+placeholder.  Teaching the engine (and the template lane's role inventory)
+to address multiple like-typed placeholders individually is follow-up
+work, not this package's; ``placeholder_roles`` exists so that work has
+something concrete to consume.
 
 The slide's own ``title`` field always carries the native title
 placeholder; it is never repeated in ``blocks`` or ``placeholder_roles``.
@@ -144,7 +165,10 @@ def title_bullets(
     Native layout: "Title and Content" (one title placeholder, one body
     content placeholder; the standard PowerPoint layout for a single block
     of talking points).  Each bullet becomes its own ``body``-style text
-    block under the ``"body"`` placeholder role; DOCX stacks them as
+    block under the ``"body"`` placeholder role; this shape has only one
+    content region, so it already renders fully as intended on both
+    engines today - ``presenter.render_pptx`` appends each bullet as its
+    own paragraph in the body placeholder, and DOCX stacks them as
     consecutive paragraphs (no native bulleted-list styling until the DOCX
     engine grows one).
     """
@@ -170,7 +194,15 @@ def title_single_image(
     """Title plus one image, optionally captioned.
 
     Native layout: "Picture with Caption" (title, picture placeholder, and
-    a caption placeholder that the image block's own ``caption`` fills).
+    a caption region).  Leave ``width_in`` unset and
+    ``presenter.render_pptx`` inserts the image straight into the layout's
+    picture placeholder today; passing ``width_in`` explicitly sizes the
+    picture but opts out of the placeholder, matching how an explicit
+    width already behaves everywhere else in this library.  The image
+    block's own ``caption`` always prints as a text box under the picture;
+    the engine does not yet target the layout's own caption-role
+    placeholder specifically, so a template's caption styling on that
+    placeholder is not picked up until it does.
     """
     image_source = _require_str("image_source", image_source)
     blocks = [_image(image_source, width_in=width_in, caption=caption)]
@@ -197,7 +229,13 @@ def split_half_text_images(
     placeholders).  ``side`` names which half the images occupy; text
     takes the other half.  In ``blocks`` the ``"left"`` region's content
     always comes first regardless of which half it is, so DOCX still reads
-    top-to-bottom in on-slide left-to-right order.
+    top-to-bottom in on-slide left-to-right order.  Today's
+    ``presenter.render_pptx`` does not yet address the layout's two content
+    placeholders separately (see the package docstring), so until that
+    lands the text and images currently converge on this slide's single
+    body placeholder and a free-floating picture rather than a true visual
+    split; choosing "Two Content" still puts the right template in place
+    for when that follow-up work lands.
     """
     _validate_side(side)
     bullets = _require_str_list("bullets", bullets)
@@ -231,7 +269,13 @@ def two_column_bullets(
     content placeholders each sit under their own heading placeholder,
     which is exactly what a headed column needs); plain "Two Content"
     otherwise.  A column heading, when given, becomes a ``heading2``-style
-    text block leading that column's blocks.
+    text block leading that column's blocks.  As with
+    :func:`split_half_text_images`, today's ``presenter.render_pptx``
+    merges every body-style block into this slide's single body
+    placeholder until it can address a layout's peer placeholders
+    separately (see the package docstring); the column headings still
+    render as their own text boxes today since ``heading2`` is not a
+    placeholder-claiming style.
     """
     left_bullets = _require_str_list("left_bullets", left_bullets)
     right_bullets = _require_str_list("right_bullets", right_bullets)
@@ -264,7 +308,12 @@ def bullets_and_table(
     Native layout: "Two Content", the same two-placeholder layout used by
     :func:`split_half_text_images`; a table is just another content type a
     "Two Content" placeholder can hold.  ``side`` names which half the
-    table occupies.
+    table occupies.  Today's ``presenter.render_pptx`` only claims a
+    table-role placeholder when the layout has one (stock "Two Content"
+    does not), so the table currently free-flows below the body text
+    rather than sitting in its own half; see the package docstring for the
+    same peer-placeholder-addressing gap :func:`split_half_text_images`
+    documents.
     """
     _validate_side(side)
     bullets = _require_str_list("bullets", bullets)
@@ -298,10 +347,12 @@ def image_grid(
     arbitrary image grid (native layouts top out at the two side-by-side
     placeholders in "Two Content"/"Comparison"), so this is the one shape
     in this package without a native-layout match.  ``layout`` is "Blank"
-    and the returned spec carries a ``"columns"`` hint; computing the actual
-    grid geometry from ``columns`` and the image count is render-engine work
-    (not implemented yet for either engine), and DOCX falls back further
-    still, simply stacking every image top to bottom.
+    (no placeholders to claim) and the returned spec carries a
+    ``"columns"`` hint; computing actual grid geometry from ``columns`` and
+    the image count is render-engine work, not implemented yet by either
+    engine, so both currently just stack every image top to bottom -
+    ``presenter.render_pptx`` free-flows each picture down the slide the
+    same way DOCX stacks paragraphs.
     """
     image_sources = _require_str_list("image_sources", image_sources)
     if not isinstance(columns, int) or isinstance(columns, bool) or columns < 1:
