@@ -62,6 +62,7 @@ def test_explicit_null_style_normalizes_to_default() -> None:
         "headers": ["A"],
         "rows": [[1]],
         "style": "grid",
+        "alignments": None,
     }
 
 
@@ -81,6 +82,7 @@ def test_table_block_full_normalization() -> None:
         "headers": ["A", "B"],
         "rows": [["1", 2], [None, True]],
         "style": "grid",
+        "alignments": None,
     }
     assert json.loads(json.dumps(out)) == out
 
@@ -120,7 +122,9 @@ def test_image_and_plot_share_shape(kind: str) -> None:
 
 def test_equation_block() -> None:
     out = validate_block({"type": "equation", "latex": r"E = mc^2"})
-    assert out == {"type": "equation", "latex": r"E = mc^2", "font_size_pt": None}
+    assert out == {
+        "type": "equation", "latex": r"E = mc^2", "font_size_pt": None, "image": None,
+    }
     assert validate_block({"type": "equation", "latex": "x", "font_size_pt": 11})["font_size_pt"] == 11.0
     with pytest.raises(BlockValidationError, match="latex"):
         validate_block({"type": "equation", "latex": ""})
@@ -170,10 +174,19 @@ def test_validate_blocks_rejects_non_list() -> None:
 def test_typed_accessors_round_trip() -> None:
     cases = [
         (TextBlock, {"type": "text", "style": "caption", "text": "c"}),
-        (TableBlock, {"type": "table", "caption": "t", "headers": ["h"], "rows": [[1]], "style": "plain"}),
+        (
+            TableBlock,
+            {
+                "type": "table", "caption": "t", "headers": ["h"], "rows": [[1]],
+                "style": "plain", "alignments": None,
+            },
+        ),
         (ImageBlock, {"type": "image", "source": "i.png", "width_in": 2.5, "caption": None}),
         (PlotBlock, {"type": "plot", "source": "artifact://p", "width_in": None, "caption": "p"}),
-        (EquationBlock, {"type": "equation", "latex": "a+b", "font_size_pt": 10.0}),
+        (
+            EquationBlock,
+            {"type": "equation", "latex": "a+b", "font_size_pt": 10.0, "image": None},
+        ),
         (TocBlock, {"type": "toc"}),
         (PageBreakBlock, {"type": "pagebreak"}),
     ]
@@ -198,6 +211,7 @@ def test_builder_helpers_return_validated_dicts() -> None:
     assert blocks.text("x") == {"type": "text", "style": "body", "text": "x"}
     assert blocks.table(("A",), [(1,)], caption="c", style="striped") == {
         "type": "table", "caption": "c", "headers": ["A"], "rows": [[1]], "style": "striped",
+        "alignments": None,
     }
     assert blocks.image("a.png", width_in=1)["width_in"] == 1.0
     assert blocks.plot("artifact://p", caption="c")["caption"] == "c"

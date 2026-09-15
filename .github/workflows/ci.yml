@@ -31,6 +31,25 @@ jobs:
       # fails locally before merge.
       - run: bin/fm-lint.sh
 
+  # The presenter Python package's own pytest suite; CONTRIBUTING.md notes
+  # this is outside bin/fm-test-run.sh's tests/*.test.sh selection, so it
+  # gets its own job rather than folding into any bash test lane.
+  presenter-tests:
+    name: Presenter pytest suite
+    runs-on: ubuntu-latest
+    # Hang tripwire: the full suite (render, template ingestion, content
+    # blocks, artifacts, integration) runs in seconds locally.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install presenter with dev extras
+        run: pip install -e ".[dev]"
+      - name: Run presenter pytest suite
+        run: python -m pytest
+
   # Deterministic proof that portable parallel shards + portable serial + Herdr
   # equal the complete tests/*.test.sh inventory with no missing or duplicates,
   # and that the portable serial CI shards partition that serial lane exactly.

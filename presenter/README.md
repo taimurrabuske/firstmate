@@ -14,7 +14,8 @@ The block contract and the TemplateBinding contract below are the canonical text
 - `presenter/render_docx/` - the DOCX datasheet render engine.
 - `presenter/blocks/` and `presenter/artifacts.py` - technical content block generators and the artifact source that image and plot blocks reference.
 
-Only `presenter/core/` ships in the foundation slice; the other packages register into it as they land.
+Every package above is landed and composes into one working pipeline; the PPTX render engine (`presenter/render_pptx/`) is the only slot still a stub.
+`examples/datasheet_demo.py` is the runnable, end-to-end version of the shape below: it binds a fixture `.docx` template, assembles a spec from every block type including a table, a plot, and an equation, and renders a real `.docx` file.
 
 ## Install
 
@@ -44,6 +45,7 @@ Everything below is importable from `presenter.core`.
   The output path must end in the binding's format extension.
 - `register_engine(fmt, engine)` plugs an engine into the registry; `unregister_engine`, `get_engine`, `registered_formats`, and `is_engine_implemented` inspect and manage it.
   The `pptx` and `docx` slots exist from import time with stubs that raise `EngineNotImplementedError` (a subclass of both `RenderError` and `NotImplementedError`) until a real engine registers.
+  Registration is explicit and opt-in, never a side effect of importing a package: call `presenter.render_docx.register()` once (an application entry point, a test fixture, or `examples/datasheet_demo.py`) before the first `render()` call targeting `docx`.
 - `PresenterError` is the base of every library error; `SpecError`, `BlockValidationError`, `BindingError`, `RenderError`, `UnknownFormatError`, and `EngineNotImplementedError` refine it.
 
 ### Engine contract
@@ -52,6 +54,8 @@ An engine is a plain callable `engine(document, binding, output_path) -> output_
 `document` is the normalized dict from `DocumentSpec.to_dict()`, `binding` is the TemplateBinding dict with `format` lower-cased, and `output_path` is a `pathlib.Path`.
 The engine writes the file and returns the path it wrote.
 Engines code against these plain dicts, not against `presenter.core` dataclasses, so each lane integrates without importing the others.
+`presenter.render_docx.render` predates this contract and takes a flat block list rather than a full document dict; `presenter.render_docx.render_document` is the adapter matching this Engine shape, flattening a document's slides (each slide's title becomes a `heading1` block ahead of its own blocks) before calling `render`.
+`presenter.render_docx.register()` registers that adapter.
 
 ## Block contract
 
@@ -61,15 +65,17 @@ Shared block contract (plain JSON-serializable dicts):
 - `{"type": "table", "caption": str|null, "headers": [str, ...], "rows": [[value, ...], ...], "style": "grid|plain|striped"}`
 - `{"type": "image", "source": "<artifact ref or filesystem path>", "width_in": float|null, "caption": str|null}`
 - `{"type": "plot", "source": "<artifact ref to a rendered plot image>", "width_in": float|null, "caption": str|null}`
-- `{"type": "equation", "latex": str, "font_size_pt": float|null}`
+- `{"type": "equation", "latex": str, "font_size_pt": float|null, "image": str|null}`
 - `{"type": "toc"}` and `{"type": "pagebreak"}`
 
 Validation rules layered on that contract by `presenter.core.blocks`:
 
 - `style` defaults to `body` for text and `grid` for tables when omitted or `null`; every other optional field normalizes to `null` the same way, so an explicit `null` is always equivalent to omitting the field.
 - A table's rows must each have exactly as many values as there are headers, and a value is a string, number, boolean, or `null`.
+- A table's optional `alignments` is a list of `"left"|"center"|"right"`, one per header column, when given.
 - `width_in` and `font_size_pt` must be positive numbers when given.
 - `source` and `latex` must be non-empty strings.
+- An equation's optional `image` names a pre-rendered picture (a filesystem path or artifact reference, resolved the same way as an `image`/`plot` block's `source`) to insert in place of the raw LaTeX string; `presenter.blocks.equation` populates it.
 - Keys outside the contract are rejected, so a misspelled field fails validation instead of being ignored.
 
 ## TemplateBinding contract
@@ -85,14 +91,17 @@ The meaning of those mappings belongs to `presenter/templates/`.
 
 ## End-to-end example
 
-This example is aspirational: it shows the intended shape once the template, DOCX, and content-block lanes have landed and registered their engines.
-In the foundation slice alone, the final `render` call raises `EngineNotImplementedError` because no engine has registered yet.
+This example shows the intended shape now that the template, DOCX, and content-block lanes have landed; `examples/datasheet_demo.py` is its runnable counterpart, generating its own fixture template and artifacts at runtime.
+`render` dispatches to whichever engine is registered for `binding["format"]`, so register the DOCX adapter once before the final call.
 
 ```python
 import json
 
+import presenter.render_docx
 from presenter.core import DocumentBuilder, render
 from presenter.core.blocks import equation, image, pagebreak, plot, table, text, toc
+
+presenter.render_docx.register()  # plug the DOCX engine into presenter.core.render
 
 # Produced by the template lane from a corporate .dotx or .potx file.
 with open("bindings/acme-datasheet.json") as fh:
