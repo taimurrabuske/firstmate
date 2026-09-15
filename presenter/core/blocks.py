@@ -51,6 +51,7 @@ __all__ = [
 
 TEXT_STYLES: tuple[str, ...] = ("body", "heading1", "heading2", "caption")
 TABLE_STYLES: tuple[str, ...] = ("grid", "plain", "striped")
+TABLE_ALIGNMENTS: tuple[str, ...] = ("left", "center", "right")
 BLOCK_TYPES: frozenset[str] = frozenset(
     {"text", "table", "image", "plot", "equation", "toc", "pagebreak"}
 )
@@ -60,10 +61,10 @@ BLOCK_TYPES: frozenset[str] = frozenset(
 # rendering silently without the caption.
 _ALLOWED_KEYS: dict[str, frozenset[str]] = {
     "text": frozenset({"style", "text"}),
-    "table": frozenset({"caption", "headers", "rows", "style"}),
+    "table": frozenset({"caption", "headers", "rows", "style", "alignments"}),
     "image": frozenset({"source", "width_in", "caption"}),
     "plot": frozenset({"source", "width_in", "caption"}),
-    "equation": frozenset({"latex", "font_size_pt"}),
+    "equation": frozenset({"latex", "font_size_pt", "image"}),
     "toc": frozenset(),
     "pagebreak": frozenset(),
 }
@@ -175,6 +176,7 @@ def validate_block(block: Mapping[str, Any], *, location: str | None = None) -> 
             "type": "equation",
             "latex": _require_str(block, "latex", location),
             "font_size_pt": _optional_positive_number(block, "font_size_pt", location),
+            "image": _optional_str(block, "image", location),
         }
     return {"type": block_type}
 
@@ -212,7 +214,28 @@ def _validate_table(block: Mapping[str, Any], location: str | None) -> dict[str,
         "headers": list(headers),
         "rows": normalized_rows,
         "style": _choice(block, "style", TABLE_STYLES, "grid", location),
+        "alignments": _optional_alignments(block, len(headers), location),
     }
+
+
+def _optional_alignments(
+    block: Mapping[str, Any], ncols: int, location: str | None
+) -> list[str] | None:
+    value = block.get("alignments")
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) != ncols:
+        raise _fail(
+            f"field 'alignments' must be a list of {ncols} alignment(s) matching 'headers'",
+            location,
+        )
+    for i, align in enumerate(value):
+        if align not in TABLE_ALIGNMENTS:
+            raise _fail(
+                f"alignments[{i}] must be one of {', '.join(TABLE_ALIGNMENTS)}, got {align!r}",
+                location,
+            )
+    return list(value)
 
 
 def validate_blocks(
@@ -251,19 +274,26 @@ class TextBlock:
 
 @dataclass(frozen=True)
 class TableBlock:
-    """``{"type": "table", "caption": ..., "headers": [...], "rows": [[...]], "style": ...}``."""
+    """``{"type": "table", "caption": ..., "headers": [...], "rows": [[...]], "style": ..., "alignments": ...}``."""
 
     headers: list[str]
     rows: list[list[_CellValue]] = field(default_factory=list)
     caption: str | None = None
     style: str = "grid"
+    alignments: list[str] | None = None
 
     @classmethod
     def from_dict(cls, block: Mapping[str, Any]) -> "TableBlock":
         d = validate_block(block)
         if d["type"] != "table":
             raise BlockValidationError(f"expected a table block, got {d['type']!r}")
-        return cls(headers=d["headers"], rows=d["rows"], caption=d["caption"], style=d["style"])
+        return cls(
+            headers=d["headers"],
+            rows=d["rows"],
+            caption=d["caption"],
+            style=d["style"],
+            alignments=d["alignments"],
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return validate_block({"type": "table", **asdict(self)})
@@ -309,17 +339,18 @@ class PlotBlock:
 
 @dataclass(frozen=True)
 class EquationBlock:
-    """``{"type": "equation", "latex": ..., "font_size_pt": ...}``."""
+    """``{"type": "equation", "latex": ..., "font_size_pt": ..., "image": ...}``."""
 
     latex: str
     font_size_pt: float | None = None
+    image: str | None = None
 
     @classmethod
     def from_dict(cls, block: Mapping[str, Any]) -> "EquationBlock":
         d = validate_block(block)
         if d["type"] != "equation":
             raise BlockValidationError(f"expected an equation block, got {d['type']!r}")
-        return cls(latex=d["latex"], font_size_pt=d["font_size_pt"])
+        return cls(latex=d["latex"], font_size_pt=d["font_size_pt"], image=d["image"])
 
     def to_dict(self) -> dict[str, Any]:
         return validate_block({"type": "equation", **asdict(self)})
@@ -390,6 +421,7 @@ def table(
     *,
     caption: str | None = None,
     style: str = "grid",
+    alignments: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Build a validated table block."""
     return validate_block(
@@ -399,6 +431,7 @@ def table(
             "headers": list(headers),
             "rows": [list(r) for r in rows],
             "style": style,
+            "alignments": list(alignments) if alignments is not None else None,
         }
     )
 
@@ -417,9 +450,13 @@ def plot(source: str, *, width_in: float | None = None, caption: str | None = No
     )
 
 
-def equation(latex: str, *, font_size_pt: float | None = None) -> dict[str, Any]:
+def equation(
+    latex: str, *, font_size_pt: float | None = None, image: str | None = None
+) -> dict[str, Any]:
     """Build a validated equation block."""
-    return validate_block({"type": "equation", "latex": latex, "font_size_pt": font_size_pt})
+    return validate_block(
+        {"type": "equation", "latex": latex, "font_size_pt": font_size_pt, "image": image}
+    )
 
 
 def toc() -> dict[str, Any]:
