@@ -8,21 +8,23 @@ for parsing and formatting mathematical expressions to LaTeX.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import tempfile
+from pathlib import Path
 from typing import Any
 
 import matplotlib
+
 # Enforce headless rendering
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-try:
-    import sympy as sp  # type: ignore[import-untyped]
-    _HAS_SYMPY = True
-except ImportError:
-    sp = None  # type: ignore[assignment]
-    _HAS_SYMPY = False
+from presenter.omml import (
+    EquationConversionError,
+    UnsupportedMacroError,
+    latex_to_mathml,
+    latex_to_omml,
+    mathml_to_omml,
+)
 
 
 def _ensure_output_path(output_path: str | Path | None = None) -> Path:
@@ -129,6 +131,15 @@ def render_latex_to_png(
     return resolved_out
 
 
+try:
+    import sympy as sp  # type: ignore[import-untyped]
+
+    _HAS_SYMPY = True
+except ImportError:
+    sp = None  # type: ignore[assignment]
+    _HAS_SYMPY = False
+
+
 def build_equation(
     latex: str,
     *,
@@ -138,6 +149,8 @@ def build_equation(
     render_image: bool = True,
     color: str = "black",
     background: str = "transparent",
+    mode: str | None = None,
+    native: bool = False,
 ) -> dict[str, Any]:
     """Build an equation block dict matching the shared presenter block contract.
 
@@ -153,9 +166,12 @@ def build_equation(
                       the 'image' key. If False, 'image' will be None.
         color: Font color for rendered image.
         background: Background color ('transparent' or a color string).
+        mode: Equation render mode ('native', 'native-preferred', 'native-required',
+              'image', or 'monospace').
+        native: Convenience flag; if True and mode is None, sets mode to 'native'.
 
     Returns:
-        An equation block dict with keys 'type', 'latex', 'font_size_pt', and 'image'.
+        An equation block dict.
     """
     image_path: str | None = None
 
@@ -171,12 +187,18 @@ def build_equation(
         )
         image_path = str(rendered)
 
-    return {
+    resolved_mode = mode or ("native" if native else None)
+
+    block: dict[str, Any] = {
         "type": "equation",
         "latex": latex,
         "font_size_pt": font_size_pt,
         "image": image_path,
     }
+    if resolved_mode is not None:
+        block["mode"] = resolved_mode
+
+    return block
 
 
 def build_equation_from_sympy(
@@ -188,6 +210,8 @@ def build_equation_from_sympy(
     render_image: bool = True,
     color: str = "black",
     background: str = "transparent",
+    mode: str | None = None,
+    native: bool = False,
 ) -> dict[str, Any]:
     """Build an equation block from a SymPy expression or math expression string.
 
@@ -212,12 +236,19 @@ def build_equation_from_sympy(
         render_image=render_image,
         color=color,
         background=background,
+        mode=mode,
+        native=native,
     )
 
 
 __all__ = [
-    "render_latex_to_png",
-    "latex_from_sympy",
+    "EquationConversionError",
+    "UnsupportedMacroError",
     "build_equation",
     "build_equation_from_sympy",
+    "latex_from_sympy",
+    "latex_to_mathml",
+    "latex_to_omml",
+    "mathml_to_omml",
+    "render_latex_to_png",
 ]

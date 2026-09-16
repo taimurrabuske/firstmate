@@ -52,11 +52,19 @@ written path.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from pptx import Presentation
 from pptx.util import Emu, Inches, Pt
+
+from presenter.blocks.equation import render_latex_to_png
+from presenter.omml import (
+    EquationConversionError,
+    convert_latex_to_pptx_element,
+    omml_to_pptx_element,
+)
 
 __all__ = ["render", "render_document"]
 
@@ -448,9 +456,81 @@ class DeckWriter:
             self._add_caption_box(str(caption), width=int(picture.width))
 
     def _add_equation(self, block: Block) -> None:
+        mode = block.get("mode") or self._binding.get("equation_mode")
         image = block.get("image")
-        if image:
-            resolved = _resolve_picture_source(str(image), self._binding)
+        latex = str(block.get("latex") or "")
+        omml_raw = block.get("omml")
+        caption = block.get("caption")
+
+        if mode is None:
+            if image:
+                mode = "image"
+            else:
+                mode = "monospace"
+
+        if mode in ("native", "native-preferred", "native-required"):
+            try:
+                if omml_raw:
+                    pptx_elem = omml_to_pptx_element(str(omml_raw))
+                else:
+                    pptx_elem = convert_latex_to_pptx_element(latex)
+
+                font_size_pt = block.get("font_size_pt")
+                font_pt = float(font_size_pt) if font_size_pt is not None else 18.0
+                width = self._content_width()
+                box = self._slide.shapes.add_textbox(
+                    _MARGIN,
+                    self._cursor,
+                    width,
+                    _estimate_box_height(latex, width, font_pt),
+                )
+                frame = box.text_frame
+                frame.word_wrap = True
+                p = frame.paragraphs[0]
+                p._p.append(pptx_elem)
+
+                self._slide_has_content = True
+                self._cursor += int(box.height) + int(_GAP)
+                if caption:
+                    self._add_caption_box(str(caption), width=width)
+                return
+            except (EquationConversionError, Exception):
+                if mode == "native-required":
+                    raise
+                # Fall back to high-resolution image rendering
+                fallback_img = image
+                if not fallback_img and latex:
+                    try:
+                        font_size_pt = block.get("font_size_pt")
+                        size = float(font_size_pt) if font_size_pt is not None else 18.0
+                        fallback_img = str(
+                            render_latex_to_png(latex, font_size_pt=size)
+                        )
+                    except (ValueError, RuntimeError, OSError):
+                        fallback_img = None
+                if fallback_img:
+                    resolved = _resolve_picture_source(str(fallback_img), self._binding)
+                    picture = self._slide.shapes.add_picture(
+                        str(resolved), _MARGIN, self._cursor
+                    )
+                    content_width = self._content_width()
+                    if picture.width > content_width:
+                        scale = content_width / picture.width
+                        picture.width = int(picture.width * scale)
+                        picture.height = int(picture.height * scale)
+                    self._slide_has_content = True
+                    self._advance_past(picture)
+                    if caption:
+                        self._add_caption_box(str(caption), width=int(picture.width))
+                    return
+
+        if mode == "image" or image:
+            img_src = image
+            if not img_src and latex:
+                font_size_pt = block.get("font_size_pt")
+                size = float(font_size_pt) if font_size_pt is not None else 18.0
+                img_src = str(render_latex_to_png(latex, font_size_pt=size))
+            resolved = _resolve_picture_source(str(img_src), self._binding)
             picture = self._slide.shapes.add_picture(
                 str(resolved), _MARGIN, self._cursor
             )
@@ -461,8 +541,11 @@ class DeckWriter:
                 picture.height = int(picture.height * scale)
             self._slide_has_content = True
             self._advance_past(picture)
+            if caption:
+                self._add_caption_box(str(caption), width=int(picture.width))
             return
-        latex = str(block.get("latex") or "")
+
+        # Monospace fallback
         font_size_pt = block.get("font_size_pt")
         font_pt = float(font_size_pt) if font_size_pt is not None else 18.0
         width = self._content_width()
@@ -478,6 +561,8 @@ class DeckWriter:
             runs[0].font.size = Pt(font_pt)
         self._slide_has_content = True
         self._cursor += int(box.height) + int(_GAP)
+        if caption:
+            self._add_caption_box(str(caption), width=width)
 
     # -- slide-boundary blocks ------------------------------------------------
 

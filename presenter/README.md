@@ -13,6 +13,7 @@ The block contract and the TemplateBinding contract below are the canonical text
 - `presenter/templates/` - corporate template ingestion and master binding; produces TemplateBinding files.
 - `presenter/render_docx/` - the DOCX datasheet render engine.
 - `presenter/render_pptx/` - the PPTX deck render engine.
+- `presenter/omml/` - LaTeX -> MathML -> OMML conversion pipeline and Office Math element builders.
 - `presenter/blocks/` and `presenter/artifacts.py` - technical content block generators and the artifact source that image and plot blocks reference.
 - `presenter/layouts/` - convenience functions building common design-review slide layouts from those blocks.
 
@@ -67,7 +68,7 @@ Shared block contract (plain JSON-serializable dicts):
 - `{"type": "table", "caption": str|null, "headers": [str, ...], "rows": [[value, ...], ...], "style": "grid|plain|striped"}`
 - `{"type": "image", "source": "<artifact ref or filesystem path>", "width_in": float|null, "caption": str|null}`
 - `{"type": "plot", "source": "<artifact ref to a rendered plot image>", "width_in": float|null, "caption": str|null}`
-- `{"type": "equation", "latex": str, "font_size_pt": float|null, "image": str|null}`
+- `{"type": "equation", "latex": str, "font_size_pt": float|null, "image": str|null, "mode": "native|native-preferred|native-required|image|monospace"|null}`
 - `{"type": "toc"}` and `{"type": "pagebreak"}`
 
 Validation rules layered on that contract by `presenter.core.blocks`:
@@ -78,6 +79,9 @@ Validation rules layered on that contract by `presenter.core.blocks`:
 - `width_in` and `font_size_pt` must be positive numbers when given.
 - `source` and `latex` must be non-empty strings.
 - An equation's optional `image` names a pre-rendered picture (a filesystem path or artifact reference, resolved the same way as an `image`/`plot` block's `source`) to insert in place of the raw LaTeX string; `presenter.blocks.equation` populates it.
+- An equation's optional `mode` selects native Office Math rendering (`"native"`, `"native-preferred"`, or `"native-required"`) or image/monospace fallback (`"image"`, `"monospace"`).
+  In native mode, DOCX emits `m:oMath` / `m:oMathPara` elements and PPTX emits DrawingML text math containers (`a14:m` / `CT_TextMath`).
+  Native-preferred mode explicitly falls back to high-resolution image rendering when native math conversion encounters unsupported complex macros.
 - Keys outside the contract are rejected, so a misspelled field fails validation instead of being ignored.
 
 ## Markdown input
