@@ -10,5 +10,7 @@ scratchpad*
 __pycache__/
 *.pyc
 .pytest_cache/
+*.egg-info/
+/build/
 .env
 config/

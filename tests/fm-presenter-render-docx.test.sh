@@ -2,11 +2,10 @@
 # tests/fm-presenter-render-docx.test.sh - CI entry point for the presenter
 # render_docx pytest suite in tests/presenter/render_docx.
 #
-# The portable CI lanes execute only tests/*.test.sh, so the Python suite
-# behind presenter.render_docx is invisible to CI without this wrapper: a
-# green CI run would never execute the slice's own tests anywhere. The
-# wrapper builds an ephemeral venv with pinned pytest, python-docx, and
-# Pillow versions and runs the suite through the public pytest interface,
+# This focused portable-lane regression complements the full Presenter pytest
+# CI job. The wrapper builds an ephemeral venv with the package's runtime
+# dependencies plus pinned pytest, python-docx, and Pillow versions, and
+# runs the suite through the public pytest interface,
 # asserting the passed count so an empty collection cannot pass. Missing
 # prerequisites hard-fail rather than gate-skip: hosted CI provides python3
 # and pip (the herdr lane already asserts python3), and a silent skip would
@@ -37,6 +36,7 @@ install_pinned_test_deps() {
       "pytest==$PYTEST_PIN" \
       "python-docx==$PYTHON_DOCX_PIN" \
       "pillow==$PILLOW_PIN" \
+      "${ROOT}[dev]" \
       >"$log" 2>&1; then
       return 0
     fi
@@ -58,7 +58,7 @@ test_pytest_suite_passes_under_pinned_deps() {
   python3 -m venv "$TMP_ROOT/venv" >/dev/null 2>&1 \
     || fail "ephemeral venv creation failed"
   install_pinned_test_deps "$venv_python" "$TMP_ROOT/pip-install.log" \
-    || fail "pinned pytest/python-docx/Pillow install failed after 3 attempts; see pip-install.log in the test temp root"
+    || fail "presenter and pinned test dependencies install failed after 3 attempts; see pip-install.log in the test temp root"
   out=$(PYTHONDONTWRITEBYTECODE=1 "$venv_python" -m pytest "$SUITE" -q 2>&1) \
     || { printf '%s\n' "$out"; fail "presenter render_docx pytest suite failed"; }
   summary=$(printf '%s\n' "$out" | tail -n 1)
