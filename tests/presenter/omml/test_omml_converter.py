@@ -17,7 +17,9 @@ from presenter.omml import (
     omml_to_pptx_element,
 )
 
+MATHML_NS = "http://www.w3.org/1998/Math/MathML"
 OMML_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 A14_NS = "http://schemas.microsoft.com/office/drawing/2010/main"
 
 
@@ -77,6 +79,115 @@ def test_latex_to_mathml_subscripts_and_superscripts() -> None:
     assert "<msub" in mathml_str
     assert "<msubsup" in mathml_str or ("<msub" in mathml_str and "<msup" in mathml_str)
     assert "out" in mathml_str or "o" in mathml_str
+
+
+@pytest.mark.parametrize(
+    "latex,subscript,superscript",
+    [
+        ("f'", None, "′"),
+        ("f''", None, "′′"),
+        ("f'''", None, "′′′"),
+        ("f''_i", "i", "′′"),
+        ("f_i'''", "i", "′′′"),
+        ("f''_i^{2}", "i", "′′2"),
+        ("f^2''", None, "2′′"),
+        (r"f^{\prime\prime}", None, "′′"),
+    ],
+)
+def test_prime_multiplicity_and_script_attachment(
+    latex: str, subscript: str | None, superscript: str
+) -> None:
+    math = ET.fromstring(latex_to_mathml(latex))
+    script = math[0]
+    kind = "msup" if subscript is None else "msubsup"
+    assert script.tag == f"{{{MATHML_NS}}}{kind}"
+    assert "".join(script[0].itertext()) == "f"
+    assert "".join(script[-1].itertext()) == superscript
+    if subscript is not None:
+        assert "".join(script[1].itertext()) == subscript
+
+    omml = ET.fromstring(latex_to_omml(latex))
+    assert "".join(omml.find(f".//{{{OMML_NS}}}sup").itertext()) == superscript
+    if subscript is not None:
+        assert "".join(omml.find(f".//{{{OMML_NS}}}sub").itertext()) == subscript
+
+
+@pytest.mark.parametrize(
+    "latex,expected",
+    [
+        (r"\text{steady state}", "steady state"),
+        (r"\text{steady  state}", "steady  state"),
+        (r"\text{  steady  state  }", "  steady  state  "),
+        (r"\text{   }", "   "),
+        (r"\text{ before {nested words} after }", " before nested words after "),
+        (r"\text{gain \{low\} \& 50\%}", "gain {low} & 50%"),
+        (r"\text{a < b & c > d}", "a < b & c > d"),
+        (r"\text{rate \alpha per second}", "rate α per second"),
+    ],
+)
+def test_text_whitespace_and_plain_style(latex: str, expected: str) -> None:
+    math = ET.fromstring(latex_to_mathml(latex))
+    assert "".join(math.itertext()) == expected
+    assert math.find(f".//{{{MATHML_NS}}}mtext") is not None
+    omml = ET.fromstring(latex_to_omml(latex))
+    assert "".join(omml.itertext()) == expected
+    for run in omml.findall(f".//{{{OMML_NS}}}r"):
+        style = run.find(f"{{{OMML_NS}}}rPr/{{{OMML_NS}}}sty")
+        assert style is not None
+        assert style.get(f"{{{OMML_NS}}}val") == "p"
+        text = run.find(f"{{{OMML_NS}}}t")
+        if any(char.isspace() for char in text.text):
+            assert text.get(XML_SPACE) == "preserve"
+
+
+@pytest.mark.parametrize(
+    "latex",
+    [
+        "x} + y",
+        "x & y",
+        r"x \\ y",
+        r"\begin{matrix}",
+        r"\begin{bmatrix} a & b",
+        r"\begin{bmatrix} a & b \\ c & d",
+        r"\begin{bmatrix} a & b \\ c & d \\",
+        r"\begin{matrix}\begin{matrix}a\end{matrix}",
+        r"\begin{matrix}a\end{pmatrix}",
+        r"\begin{equation}x\end{equation*}",
+        r"\begin{equation*}x\end{equation}",
+        r"\begin{matrix}a\end{matrix}} discarded",
+        r"\text{unclosed words",
+        r"\text{\unknownmacro}",
+        r"\frac{x}{y",
+        r"\frac1} + y",
+        r"\frac1&y",
+        r"\frac1\\y",
+        r"\begin{matrix}a}b\end{matrix}",
+    ],
+)
+def test_rejects_partial_conversion(latex: str) -> None:
+    with pytest.raises(EquationConversionError):
+        latex_to_mathml(latex)
+    with pytest.raises(EquationConversionError):
+        latex_to_omml(latex)
+    assert can_convert_latex_to_omml(latex) is False
+
+
+def test_matrix_cells_retain_semantics() -> None:
+    latex = r"\begin{bmatrix} f'' & \text{ steady state } \\ c & d \end{bmatrix} + z"
+    math = ET.fromstring(latex_to_mathml(latex))
+    rows = math.findall(f".//{{{MATHML_NS}}}mtr")
+    assert [["".join(cell.itertext()) for cell in row] for row in rows] == [
+        ["f′′", " steady state "],
+        ["c", "d"],
+    ]
+    assert "".join(math[-2].itertext()) == "+"
+    assert "".join(math[-1].itertext()) == "z"
+    omml = ET.fromstring(latex_to_omml(latex))
+    rows = omml.findall(f".//{{{OMML_NS}}}mr")
+    assert [["".join(cell.itertext()) for cell in row] for row in rows] == [
+        ["f′′", " steady state "],
+        ["c", "d"],
+    ]
 
 
 def test_latex_to_mathml_matrix() -> None:
@@ -141,6 +252,12 @@ def test_latex_to_mathml_unsupported_macro_raises() -> None:
 def test_latex_to_mathml_empty_raises() -> None:
     with pytest.raises(EquationConversionError, match="cannot be empty"):
         latex_to_mathml("   ")
+
+
+@pytest.mark.parametrize("environment", ["equation", "equation*"])
+def test_equation_environment_wrapper(environment: str) -> None:
+    latex = rf"\begin{{{environment}}}f''\end{{{environment}}}"
+    assert latex_to_mathml(latex) == latex_to_mathml("f''")
 
 
 def test_latex_to_mathml_strips_dollar_wrappers() -> None:

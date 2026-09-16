@@ -136,7 +136,7 @@ class MathMLToOMMLConverter:
             sty.set(self._m("val"), "bi")
 
         t = ET.SubElement(r, self._m("t"))
-        if text.startswith(" ") or text.endswith(" "):
+        if tag == "mtext" or text.startswith(" ") or text.endswith(" "):
             t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
         t.text = text
         return r
