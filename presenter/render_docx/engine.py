@@ -12,7 +12,10 @@ Block types handled:
   ``Normal``.
 - ``table``: header row (bold) plus data rows; ``style`` maps ``grid`` to
   ``Table Grid``, ``striped`` to ``Light Shading Accent 1``, and ``plain``
-  to no explicit style. The caption paragraph is placed above the table.
+  to no explicit style. A ``null`` cell renders as empty text. The optional
+  ``alignments`` list applies ``left``/``center``/``right`` paragraph
+  alignment per column to both header and body cells. The caption paragraph
+  is placed above the table.
 - ``image`` / ``plot``: picture inserted from the block ``source`` (a
   filesystem path, or an artifact reference looked up in
   ``binding["artifacts"]`` when the literal path does not exist), honoring
@@ -35,7 +38,7 @@ from typing import Any
 
 from docx import Document
 from docx.document import Document as DocxDocument
-from docx.enum.text import WD_BREAK
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
@@ -66,6 +69,13 @@ _DEFAULT_TABLE_STYLES: dict[str, str | None] = {
     "grid": "Table Grid",
     "striped": "Light Shading Accent 1",
     "plain": None,
+}
+
+#: Cell alignment name -> python-docx WD_ALIGN_PARAGRAPH enum.
+_ALIGN_MAP: dict[str, WD_ALIGN_PARAGRAPH] = {
+    "left": WD_ALIGN_PARAGRAPH.LEFT,
+    "center": WD_ALIGN_PARAGRAPH.CENTER,
+    "right": WD_ALIGN_PARAGRAPH.RIGHT,
 }
 
 _TOC_FIELD_INSTRUCTION = 'TOC \\o "1-3" \\h \\z \\u'
@@ -189,7 +199,10 @@ def _add_table(
     styles: Mapping[str, Any],
 ) -> None:
     headers = [str(header) for header in (block.get("headers") or [])]
-    rows = [list(row) for row in (block.get("rows") or [])]
+    rows = [
+        ["" if value is None else str(value) for value in row]
+        for row in (block.get("rows") or [])
+    ]
     if headers:
         for row_index, row in enumerate(rows):
             if len(row) > len(headers):
@@ -216,17 +229,31 @@ def _add_table(
         except KeyError:
             pass
 
+    alignments = block.get("alignments")
     first_data_row = 0
     if headers:
         for col, header in enumerate(headers):
-            run = table.cell(0, col).paragraphs[0].add_run(header)
+            paragraph = table.cell(0, col).paragraphs[0]
+            run = paragraph.add_run(header)
             run.bold = True
+            _apply_column_alignment(paragraph, alignments, col)
         first_data_row = 1
 
     for row_index, row in enumerate(rows):
         for col in range(ncols):
             value = row[col] if col < len(row) else ""
-            table.cell(first_data_row + row_index, col).text = str(value)
+            cell = table.cell(first_data_row + row_index, col)
+            cell.text = value
+            _apply_column_alignment(cell.paragraphs[0], alignments, col)
+
+
+def _apply_column_alignment(paragraph: Any, alignments: Any, col: int) -> None:
+    """Apply the alignment named for ``col`` in ``alignments``, if any."""
+    if not alignments or col >= len(alignments):
+        return
+    alignment = _ALIGN_MAP.get(str(alignments[col]).lower().strip())
+    if alignment is not None:
+        paragraph.alignment = alignment
 
 
 def _resolve_picture_source(source: str, binding: Binding) -> Path:
