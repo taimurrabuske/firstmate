@@ -9,13 +9,14 @@ yet implemented raise :class:`EngineNotImplementedError`, which is both a
 from __future__ import annotations
 
 __all__ = [
-    "PresenterError",
-    "SpecError",
-    "BlockValidationError",
     "BindingError",
-    "RenderError",
-    "UnknownFormatError",
+    "BlockValidationError",
     "EngineNotImplementedError",
+    "MissingRendererError",
+    "PresenterError",
+    "RenderError",
+    "SpecError",
+    "UnknownFormatError",
 ]
 
 
@@ -55,3 +56,8 @@ class UnknownFormatError(RenderError):
 
 class EngineNotImplementedError(RenderError, NotImplementedError):
     """The engine slot for this format exists but nothing has registered into it."""
+
+
+class MissingRendererError(RenderError):
+    """An external renderer required for asset rasterization is not installed."""
+

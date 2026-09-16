@@ -70,8 +70,8 @@ BLOCK_TYPES: frozenset[str] = frozenset(
 _ALLOWED_KEYS: dict[str, frozenset[str]] = {
     "text": frozenset({"style", "text"}),
     "table": frozenset({"caption", "headers", "rows", "style", "alignments"}),
-    "image": frozenset({"source", "width_in", "caption"}),
-    "plot": frozenset({"source", "width_in", "caption"}),
+    "image": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text"}),
+    "plot": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text"}),
     "equation": frozenset({"latex", "font_size_pt", "image", "mode"}),
     "toc": frozenset(),
     "pagebreak": frozenset(),
@@ -140,7 +140,7 @@ def _is_cell_value(value: Any) -> bool:
     return value is None or isinstance(value, (str, int, float, bool))
 
 
-def validate_block(block: Mapping[str, Any], *, location: str | None = None) -> dict[str, Any]:
+def validate_block(block: Any, *, location: str | None = None) -> dict[str, Any]:
     """Validate one block and return its normalized plain-dict form.
 
     The returned dict is a new object: it carries ``"type"`` first, every
@@ -148,6 +148,8 @@ def validate_block(block: Mapping[str, Any], *, location: str | None = None) -> 
     when omitted), and nothing else.  ``location`` is only used to label
     the error message.
     """
+    if hasattr(block, "to_block"):
+        block = block.to_block()
     if not isinstance(block, Mapping):
         raise _fail(f"block must be a mapping, got {type(block).__name__}", location)
     if "type" not in block:
@@ -173,12 +175,23 @@ def validate_block(block: Mapping[str, Any], *, location: str | None = None) -> 
     if block_type == "table":
         return _validate_table(block, location)
     if block_type in ("image", "plot"):
-        return {
+        d = {
             "type": block_type,
             "source": _require_str(block, "source", location),
             "width_in": _optional_positive_number(block, "width_in", location),
             "caption": _optional_str(block, "caption", location),
         }
+        if "fallback" in block and block["fallback"] is not None:
+            d["fallback"] = _require_str(block, "fallback", location)
+        if "png" in block and block["png"] is not None:
+            d["png"] = _require_str(block, "png", location)
+            if "fallback" not in d:
+                d["fallback"] = d["png"]
+        if "svg" in block and block["svg"] is not None:
+            d["svg"] = _require_str(block, "svg", location)
+        if "alt_text" in block and block["alt_text"] is not None:
+            d["alt_text"] = _require_str(block, "alt_text", location)
+        return d
     if block_type == "equation":
         res: dict[str, Any] = {
             "type": "equation",
@@ -317,16 +330,32 @@ class ImageBlock:
     source: str
     width_in: float | None = None
     caption: str | None = None
+    fallback: str | None = None
+    svg: str | None = None
+    alt_text: str | None = None
 
     @classmethod
     def from_dict(cls, block: Mapping[str, Any]) -> "ImageBlock":
         d = validate_block(block)
         if d["type"] != "image":
             raise BlockValidationError(f"expected an image block, got {d['type']!r}")
-        return cls(source=d["source"], width_in=d["width_in"], caption=d["caption"])
+        return cls(
+            source=d["source"],
+            width_in=d["width_in"],
+            caption=d["caption"],
+            fallback=d.get("fallback"),
+            svg=d.get("svg"),
+            alt_text=d.get("alt_text"),
+        )
+
+    @classmethod
+    def from_figure(cls, figure: Any) -> "ImageBlock":
+        block = figure.to_block("image") if hasattr(figure, "to_block") else dict(figure)
+        return cls.from_dict(block)
 
     def to_dict(self) -> dict[str, Any]:
-        return validate_block({"type": "image", **asdict(self)})
+        data = {k: v for k, v in asdict(self).items() if v is not None}
+        return validate_block({"type": "image", **data})
 
 
 @dataclass(frozen=True)
@@ -336,16 +365,32 @@ class PlotBlock:
     source: str
     width_in: float | None = None
     caption: str | None = None
+    fallback: str | None = None
+    svg: str | None = None
+    alt_text: str | None = None
 
     @classmethod
     def from_dict(cls, block: Mapping[str, Any]) -> "PlotBlock":
         d = validate_block(block)
         if d["type"] != "plot":
             raise BlockValidationError(f"expected a plot block, got {d['type']!r}")
-        return cls(source=d["source"], width_in=d["width_in"], caption=d["caption"])
+        return cls(
+            source=d["source"],
+            width_in=d["width_in"],
+            caption=d["caption"],
+            fallback=d.get("fallback"),
+            svg=d.get("svg"),
+            alt_text=d.get("alt_text"),
+        )
+
+    @classmethod
+    def from_figure(cls, figure: Any) -> "PlotBlock":
+        block = figure.to_block("plot") if hasattr(figure, "to_block") else dict(figure)
+        return cls.from_dict(block)
 
     def to_dict(self) -> dict[str, Any]:
-        return validate_block({"type": "plot", **asdict(self)})
+        data = {k: v for k, v in asdict(self).items() if v is not None}
+        return validate_block({"type": "plot", **data})
 
 
 @dataclass(frozen=True)
@@ -461,18 +506,44 @@ def table(
     )
 
 
-def image(source: str, *, width_in: float | None = None, caption: str | None = None) -> dict[str, Any]:
+def image(
+    source: str,
+    *,
+    width_in: float | None = None,
+    caption: str | None = None,
+    fallback: str | None = None,
+    svg: str | None = None,
+    alt_text: str | None = None,
+) -> dict[str, Any]:
     """Build a validated image block."""
-    return validate_block(
-        {"type": "image", "source": source, "width_in": width_in, "caption": caption}
-    )
+    d = {"type": "image", "source": source, "width_in": width_in, "caption": caption}
+    if fallback is not None:
+        d["fallback"] = fallback
+    if svg is not None:
+        d["svg"] = svg
+    if alt_text is not None:
+        d["alt_text"] = alt_text
+    return validate_block(d)
 
 
-def plot(source: str, *, width_in: float | None = None, caption: str | None = None) -> dict[str, Any]:
+def plot(
+    source: str,
+    *,
+    width_in: float | None = None,
+    caption: str | None = None,
+    fallback: str | None = None,
+    svg: str | None = None,
+    alt_text: str | None = None,
+) -> dict[str, Any]:
     """Build a validated plot block."""
-    return validate_block(
-        {"type": "plot", "source": source, "width_in": width_in, "caption": caption}
-    )
+    d = {"type": "plot", "source": source, "width_in": width_in, "caption": caption}
+    if fallback is not None:
+        d["fallback"] = fallback
+    if svg is not None:
+        d["svg"] = svg
+    if alt_text is not None:
+        d["alt_text"] = alt_text
+    return validate_block(d)
 
 
 def equation(

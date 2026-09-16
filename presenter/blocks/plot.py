@@ -21,6 +21,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from presenter.figure import Figure
+
 
 @dataclass
 class PlotTrace:
@@ -63,14 +65,16 @@ def format_axis_label(
     return f"{label} [{unit}]"
 
 
-def _ensure_output_path(output_path: str | Path | None = None) -> Path:
+def _ensure_output_path(
+    output_path: str | Path | None = None, suffix: str = ".png"
+) -> Path:
     """Resolve an output path or create a safe temporary file."""
     if output_path is not None:
         p = Path(output_path).resolve()
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
 
-    fd, tmp = tempfile.mkstemp(prefix="presenter_plot_", suffix=".png")
+    fd, tmp = tempfile.mkstemp(prefix="presenter_plot_", suffix=suffix)
     # Close the low-level file descriptor so matplotlib can safely write to it
     import os
     os.close(fd)
@@ -105,7 +109,12 @@ def build_waveform_plot(
     caption: str | None = None,
     width_in: float | None = None,
     output_path: str | Path | None = None,
-) -> dict[str, Any]:
+    vector: bool = False,
+    format: str = "png",
+    fallback_output_path: str | Path | None = None,
+    as_figure: bool = False,
+    alt_text: str | None = None,
+) -> dict[str, Any] | Figure:
     """Build a waveform or technical plot and return a standard block dict.
 
     Args:
@@ -249,9 +258,78 @@ def build_waveform_plot(
 
         fig.tight_layout()
 
+        is_vector = vector or format in ("svg", "both")
+        if is_vector:
+            # Determine SVG and PNG fallback paths
+            if output_path is not None:
+                p_out = Path(output_path).resolve()
+                if p_out.suffix.lower() == ".svg":
+                    svg_out = p_out
+                    png_out = (
+                        Path(fallback_output_path).resolve()
+                        if fallback_output_path
+                        else p_out.with_suffix(".png")
+                    )
+                elif p_out.suffix.lower() == ".png":
+                    png_out = p_out
+                    svg_out = (
+                        Path(fallback_output_path).resolve()
+                        if fallback_output_path
+                        else p_out.with_suffix(".svg")
+                    )
+                else:
+                    svg_out = Path(str(p_out) + ".svg")
+                    png_out = (
+                        Path(fallback_output_path).resolve()
+                        if fallback_output_path
+                        else Path(str(p_out) + ".png")
+                    )
+                svg_out.parent.mkdir(parents=True, exist_ok=True)
+                png_out.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                svg_out = _ensure_output_path(None, suffix=".svg")
+                png_out = (
+                    Path(fallback_output_path).resolve()
+                    if fallback_output_path
+                    else _ensure_output_path(None, suffix=".png")
+                )
+
+            fig.savefig(svg_out, format="svg", bbox_inches="tight")
+            fig.savefig(png_out, format="png", dpi=dpi, bbox_inches="tight")
+
+            if as_figure:
+                return Figure(
+                    svg=svg_out,
+                    png=png_out,
+                    caption=caption,
+                    width_in=width_in,
+                    alt_text=alt_text or caption,
+                    source=svg_out,
+                )
+
+            return {
+                "type": "plot",
+                "source": str(svg_out),
+                "fallback": str(png_out),
+                "svg": str(svg_out),
+                "png": str(png_out),
+                "caption": caption,
+                "width_in": width_in,
+                "alt_text": alt_text,
+            }
+
         # Render to PNG
-        resolved_out = _ensure_output_path(output_path)
+        resolved_out = _ensure_output_path(output_path, suffix=".png")
         fig.savefig(resolved_out, format="png", dpi=dpi, bbox_inches="tight")
+
+        if as_figure:
+            return Figure(
+                png=resolved_out,
+                caption=caption,
+                width_in=width_in,
+                alt_text=alt_text or caption,
+                source=resolved_out,
+            )
 
     finally:
         plt.close(fig)
@@ -425,10 +503,11 @@ def build_plot_from_csv(
 
 
 __all__ = [
+    "Figure",
     "PlotTrace",
-    "format_axis_label",
-    "build_waveform_plot",
     "build_plot",
     "build_plot_from_arrays",
     "build_plot_from_csv",
+    "build_waveform_plot",
+    "format_axis_label",
 ]

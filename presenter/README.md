@@ -66,8 +66,8 @@ Shared block contract (plain JSON-serializable dicts):
 
 - `{"type": "text", "style": "body|heading1|heading2|caption", "text": str}`
 - `{"type": "table", "caption": str|null, "headers": [str, ...], "rows": [[value, ...], ...], "style": "grid|plain|striped"}`
-- `{"type": "image", "source": "<artifact ref or filesystem path>", "width_in": float|null, "caption": str|null}`
-- `{"type": "plot", "source": "<artifact ref to a rendered plot image>", "width_in": float|null, "caption": str|null}`
+- `{"type": "image", "source": "<artifact ref or filesystem path>", "width_in": float|null, "caption": str|null, "fallback": str|null, "svg": str|null, "alt_text": str|null}`
+- `{"type": "plot", "source": "<artifact ref to a rendered plot image>", "width_in": float|null, "caption": str|null, "fallback": str|null, "svg": str|null, "alt_text": str|null}`
 - `{"type": "equation", "latex": str, "font_size_pt": float|null, "image": str|null, "mode": "native|native-preferred|native-required|image|monospace"|null}`
 - `{"type": "toc"}` and `{"type": "pagebreak"}`
 
@@ -82,6 +82,9 @@ Validation rules layered on that contract by `presenter.core.blocks`:
 - An equation's optional `mode` selects native Office Math rendering (`"native"`, `"native-preferred"`, or `"native-required"`) or image/monospace fallback (`"image"`, `"monospace"`).
   In native mode, DOCX emits `m:oMath` / `m:oMathPara` elements and PPTX emits DrawingML text math containers (`a14:m` / `CT_TextMath`).
   Native-preferred mode explicitly falls back to high-resolution image rendering when native math conversion encounters unsupported complex macros.
+- An `image` or `plot` block can carry an SVG vector image (via `svg` or an `.svg` `source`) alongside a raster `fallback` PNG.
+  In PowerPoint (`.pptx`), this uses dual-relationship packaging (`asvg:svgBlip` referencing pure vector SVG alongside the PNG fallback) for razor-sharp vector zooming with full backwards compatibility.
+  When only an SVG is provided, a high-resolution PNG fallback is cleanly rasterized automatically.
 - Keys outside the contract are rejected, so a misspelled field fails validation instead of being ignored.
 
 ## Markdown input
