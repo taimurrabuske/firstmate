@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
 from presenter.render_docx import render
@@ -157,6 +158,72 @@ def test_ragged_rows_are_padded_to_header_width(
     )
     table = Document(str(output)).tables[0]
     assert table.cell(1, 2).text == ""
+
+
+def test_null_cell_renders_as_empty_text(tmp_path: Path, docx_binding: object) -> None:
+    output = tmp_path / "out.docx"
+    render(
+        [
+            {
+                "type": "table",
+                "headers": ["Parameter", "Min", "Typ", "Unit"],
+                "rows": [["Dropout", None, 150, "mV"]],
+                "style": "grid",
+            }
+        ],
+        docx_binding(),
+        output,
+    )
+    table = Document(str(output)).tables[0]
+    assert table.cell(1, 1).text == ""
+    assert table.cell(1, 2).text == "150"
+
+
+def test_alignments_apply_per_column_to_header_and_body(
+    tmp_path: Path, docx_binding: object
+) -> None:
+    output = tmp_path / "out.docx"
+    render(
+        [
+            {
+                "type": "table",
+                "headers": ["Name", "Min", "Max"],
+                "rows": [["Vout", 3.2, 3.4]],
+                "style": "grid",
+                "alignments": ["left", "right", "center"],
+            }
+        ],
+        docx_binding(),
+        output,
+    )
+    table = Document(str(output)).tables[0]
+    assert table.cell(0, 0).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.LEFT
+    assert table.cell(0, 1).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+    assert table.cell(0, 2).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert table.cell(1, 0).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.LEFT
+    assert table.cell(1, 1).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+    assert table.cell(1, 2).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+
+def test_missing_alignments_leave_default_paragraph_alignment(
+    tmp_path: Path, docx_binding: object
+) -> None:
+    output = tmp_path / "out.docx"
+    render(
+        [
+            {
+                "type": "table",
+                "headers": ["Name"],
+                "rows": [["Vout"]],
+                "style": "grid",
+            }
+        ],
+        docx_binding(),
+        output,
+    )
+    table = Document(str(output)).tables[0]
+    assert table.cell(0, 0).paragraphs[0].alignment is None
+    assert table.cell(1, 0).paragraphs[0].alignment is None
 
 
 def test_row_wider_than_headers_raises_naming_row_index(

@@ -98,8 +98,8 @@ Shared block contract (plain JSON-serializable dicts):
 Validation rules layered on that contract by `presenter.core.blocks`:
 
 - `style` defaults to `body` for text and `grid` for tables when omitted or `null`; every other optional field normalizes to `null` the same way, so an explicit `null` is always equivalent to omitting the field.
-- A table's rows must each have exactly as many values as there are headers, and a value is a string, number, boolean, or `null`.
-- A table's optional `alignments` is a list of `"left"|"center"|"right"`, one per header column, when given.
+- A table's rows must each have exactly as many values as there are headers, and a value is a string, number, boolean, or `null`; both engines render a `null` cell as empty text rather than the literal string `"None"`.
+- A table's optional `alignments` is a list of `"left"|"center"|"right"`, one per header column, when given; both engines apply it to header and body cells alike.
 - `width_in` and `font_size_pt` must be positive numbers when given.
 - `source` and `latex` must be non-empty strings.
 - An equation's optional `image` names a pre-rendered picture (a filesystem path or artifact reference, resolved the same way as an `image`/`plot` block's `source`) to insert in place of the raw LaTeX string; `presenter.blocks.equation` populates it.
