@@ -40,6 +40,7 @@ install_pinned_test_deps() {
       >"$log" 2>&1; then
       return 0
     fi
+    printf 'presenter dependency installation attempt %s failed\n' "$attempt" >&2
   done
   return 1
 }
