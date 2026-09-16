@@ -63,6 +63,14 @@ from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
+from presenter._ooxml import (
+    RELATIONSHIP_TYPE_IMAGE,
+    attach_svg_blip_extension,
+    ensure_svg_content_type,
+    get_or_add_svg_part,
+    is_svg_asset,
+    rasterize_svg_to_png,
+)
 from presenter.blocks.equation import render_latex_to_png
 from presenter.omml import (
     EquationConversionError,
@@ -175,6 +183,7 @@ def render_document(
 
 
 def _open_deck(binding: Binding | None) -> tuple[DeckWriter, str | None]:
+    ensure_svg_content_type()
     resolved: Binding = binding or {}
     fmt = resolved.get("format")
     if fmt is not None and fmt != "pptx":
@@ -608,8 +617,62 @@ class DeckWriter:
 
     def _add_picture_block(self, block: Block) -> None:
         source = block.get("source")
-        if not source:
+        svg = block.get("svg")
+        fallback = block.get("fallback") or block.get("png")
+        if not source and not svg and not fallback:
             raise ValueError(f"{block.get('type')!r} block requires a 'source' key")
+
+        # Determine whether this is an SVG picture
+        is_svg = False
+        resolved_svg: Path | None = None
+        if svg:
+            resolved_svg = _resolve_picture_source(str(svg), self._binding)
+            is_svg = True
+        elif source:
+            resolved = _resolve_picture_source(str(source), self._binding)
+            if is_svg_asset(resolved):
+                resolved_svg = resolved
+                is_svg = True
+            else:
+                resolved_svg = None
+
+        if is_svg and resolved_svg is not None:
+            # SVG mode: resolve or cleanly rasterize PNG fallback
+            if fallback:
+                resolved_png = _resolve_picture_source(str(fallback), self._binding)
+            else:
+                resolved_png = rasterize_svg_to_png(resolved_svg, dpi=300)
+
+            svg_bytes = resolved_svg.read_bytes()
+            width_in = block.get("width_in")
+            width = Emu(int(Inches(float(width_in)))) if width_in is not None else None
+
+            if width is None:
+                placeholder = self._take_placeholder("picture")
+                if placeholder is not None and hasattr(placeholder, "insert_picture"):
+                    picture = placeholder.insert_picture(str(resolved_png))
+                    svg_part = get_or_add_svg_part(self._prs.part.package, svg_bytes)
+                    svg_rId = self._slide.part.relate_to(svg_part, RELATIONSHIP_TYPE_IMAGE)
+                    attach_svg_blip_extension(picture._element.blipFill.blip, svg_rId)
+                    self._finish_picture(picture, block)
+                    return
+
+            picture = self._slide.shapes.add_picture(
+                str(resolved_png), _MARGIN, self._cursor, width=width
+            )
+            content_width = self._content_width()
+            if picture.width > content_width:
+                scale = content_width / picture.width
+                picture.width = int(picture.width * scale)
+                picture.height = int(picture.height * scale)
+
+            svg_part = get_or_add_svg_part(self._prs.part.package, svg_bytes)
+            svg_rId = self._slide.part.relate_to(svg_part, RELATIONSHIP_TYPE_IMAGE)
+            attach_svg_blip_extension(picture._element.blipFill.blip, svg_rId)
+            self._finish_picture(picture, block)
+            return
+
+        # Ordinary raster picture
         resolved = _resolve_picture_source(str(source), self._binding)
         width_in = block.get("width_in")
         width = Emu(int(Inches(float(width_in)))) if width_in is not None else None
@@ -632,6 +695,12 @@ class DeckWriter:
     def _finish_picture(self, picture: Any, block: Block) -> None:
         self._slide_has_content = True
         self._advance_past(picture)
+        alt_text = block.get("alt_text")
+        if alt_text:
+            try:
+                picture._element.nvPicPr.cNvPr.set("descr", str(alt_text))
+            except (AttributeError, TypeError):
+                pass
         caption = block.get("caption")
         if caption:
             self._add_caption_box(str(caption), width=int(picture.width))
@@ -691,9 +760,23 @@ class DeckWriter:
                         fallback_img = None
                 if fallback_img:
                     resolved = _resolve_picture_source(str(fallback_img), self._binding)
-                    picture = self._slide.shapes.add_picture(
-                        str(resolved), _MARGIN, self._cursor
-                    )
+                    if is_svg_asset(resolved):
+                        fallback = block.get("fallback") or block.get("png")
+                        if fallback:
+                            resolved_png = _resolve_picture_source(str(fallback), self._binding)
+                        else:
+                            resolved_png = rasterize_svg_to_png(resolved, dpi=300)
+                        picture = self._slide.shapes.add_picture(
+                            str(resolved_png), _MARGIN, self._cursor
+                        )
+                        svg_bytes = resolved.read_bytes()
+                        svg_part = get_or_add_svg_part(self._prs.part.package, svg_bytes)
+                        svg_rId = self._slide.part.relate_to(svg_part, RELATIONSHIP_TYPE_IMAGE)
+                        attach_svg_blip_extension(picture._element.blipFill.blip, svg_rId)
+                    else:
+                        picture = self._slide.shapes.add_picture(
+                            str(resolved), _MARGIN, self._cursor
+                        )
                     content_width = self._content_width()
                     if picture.width > content_width:
                         scale = content_width / picture.width
@@ -712,9 +795,23 @@ class DeckWriter:
                 size = float(font_size_pt) if font_size_pt is not None else 18.0
                 img_src = str(render_latex_to_png(latex, font_size_pt=size))
             resolved = _resolve_picture_source(str(img_src), self._binding)
-            picture = self._slide.shapes.add_picture(
-                str(resolved), _MARGIN, self._cursor
-            )
+            if is_svg_asset(resolved):
+                fallback = block.get("fallback") or block.get("png")
+                if fallback:
+                    resolved_png = _resolve_picture_source(str(fallback), self._binding)
+                else:
+                    resolved_png = rasterize_svg_to_png(resolved, dpi=300)
+                picture = self._slide.shapes.add_picture(
+                    str(resolved_png), _MARGIN, self._cursor
+                )
+                svg_bytes = resolved.read_bytes()
+                svg_part = get_or_add_svg_part(self._prs.part.package, svg_bytes)
+                svg_rId = self._slide.part.relate_to(svg_part, RELATIONSHIP_TYPE_IMAGE)
+                attach_svg_blip_extension(picture._element.blipFill.blip, svg_rId)
+            else:
+                picture = self._slide.shapes.add_picture(
+                    str(resolved), _MARGIN, self._cursor
+                )
             content_width = self._content_width()
             if picture.width > content_width:
                 scale = content_width / picture.width

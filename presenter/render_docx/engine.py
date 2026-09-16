@@ -40,6 +40,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 
+from presenter._ooxml import is_svg_asset, rasterize_svg_to_png
 from presenter.blocks.equation import render_latex_to_png
 from presenter.omml import (
     EquationConversionError,
@@ -268,9 +269,24 @@ def _add_picture_block(
     styles: Mapping[str, Any],
 ) -> None:
     source = block.get("source")
-    if not source:
+    svg = block.get("svg")
+    fallback = block.get("fallback") or block.get("png")
+    if not source and not svg and not fallback:
         raise ValueError(f"{block.get('type')!r} block requires a 'source' key")
-    resolved = _resolve_picture_source(str(source), binding)
+    target_src = str(fallback or source or svg)
+    if svg:
+        resolved_svg = _resolve_picture_source(str(svg), binding)
+        if fallback:
+            resolved = _resolve_picture_source(str(fallback), binding)
+        else:
+            resolved = rasterize_svg_to_png(resolved_svg, dpi=300)
+    else:
+        resolved = _resolve_picture_source(target_src, binding)
+        if is_svg_asset(resolved):
+            if fallback:
+                resolved = _resolve_picture_source(str(fallback), binding)
+            else:
+                resolved = rasterize_svg_to_png(resolved, dpi=300)
     paragraph = document.add_paragraph()
     _add_picture_run(paragraph, resolved, block.get("width_in"))
     caption = block.get("caption")
@@ -321,6 +337,12 @@ def _add_equation(
                     fallback_img = None
             if fallback_img:
                 resolved = _resolve_picture_source(str(fallback_img), binding)
+                if is_svg_asset(resolved):
+                    fallback = block.get("fallback") or block.get("png")
+                    if fallback:
+                        resolved = _resolve_picture_source(str(fallback), binding)
+                    else:
+                        resolved = rasterize_svg_to_png(resolved, dpi=300)
                 paragraph = document.add_paragraph()
                 _add_picture_run(paragraph, resolved, None)
                 if caption:
@@ -334,6 +356,12 @@ def _add_equation(
             size = float(font_size_pt) if font_size_pt is not None else 14.0
             img_src = str(render_latex_to_png(latex, font_size_pt=size))
         resolved = _resolve_picture_source(str(img_src), binding)
+        if is_svg_asset(resolved):
+            fallback = block.get("fallback") or block.get("png")
+            if fallback:
+                resolved = _resolve_picture_source(str(fallback), binding)
+            else:
+                resolved = rasterize_svg_to_png(resolved, dpi=300)
         paragraph = document.add_paragraph()
         _add_picture_run(paragraph, resolved, None)
         if caption:

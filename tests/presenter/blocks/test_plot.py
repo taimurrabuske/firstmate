@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 from presenter.blocks.plot import (
+    Figure,
     PlotTrace,
     build_plot,
     build_plot_from_arrays,
@@ -359,3 +360,66 @@ def test_build_plot_from_csv_invalid_columns(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="y_col 'Bad' not found"):
         build_plot_from_csv(csv_file, x_col="A", y_cols=["Bad"])
+
+
+def test_build_waveform_plot_vector_svg(tmp_path: Path) -> None:
+    """Verify vector waveform plotting generates both SVG and high-res PNG fallback."""
+    x = [0.0, 1.0, 2.0, 3.0]
+    y = [0.0, 1.0, 4.0, 9.0]
+    out_svg = tmp_path / "waveform.svg"
+
+    block = build_waveform_plot(
+        x=x,
+        y=y,
+        vector=True,
+        caption="Parabolic Response",
+        output_path=out_svg,
+    )
+
+    assert isinstance(block, dict)
+    assert block["type"] == "plot"
+    assert block["source"] == str(out_svg)
+    assert "fallback" in block
+    assert block["caption"] == "Parabolic Response"
+
+    fallback_p = Path(block["fallback"])
+    assert out_svg.is_file()
+    assert fallback_p.is_file()
+
+    # Check SVG and PNG signatures
+    svg_text = out_svg.read_text(encoding="utf-8")
+    assert "<svg" in svg_text
+    assert fallback_p.read_bytes().startswith(b"\x89PNG")
+
+
+def test_build_waveform_plot_as_figure(tmp_path: Path) -> None:
+    """Verify build_waveform_plot returns a Figure instance when as_figure=True."""
+    x = [0.0, 1.0, 2.0]
+    y = [1.0, 2.0, 3.0]
+
+    fig = build_waveform_plot(x=x, y=y, vector=True, as_figure=True, caption="Figure Test")
+
+    assert isinstance(fig, Figure)
+    assert fig.has_svg is True
+    assert fig.has_png is True
+    assert fig.caption == "Figure Test"
+
+    block = fig.to_block()
+    assert block["type"] == "image"
+    assert "fallback" in block
+
+
+def test_build_plot_from_arrays_vector(tmp_path: Path) -> None:
+    """Verify build_plot_from_arrays forwards vector flag."""
+    out_svg = tmp_path / "arrays.svg"
+    block = build_plot_from_arrays(
+        x=[1, 2, 3],
+        y=[2, 4, 6],
+        vector=True,
+        output_path=out_svg,
+    )
+    assert isinstance(block, dict)
+    assert block["type"] == "plot"
+    assert Path(block["source"]).is_file()
+    assert Path(block["fallback"]).is_file()
+

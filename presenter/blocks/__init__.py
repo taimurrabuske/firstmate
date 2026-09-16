@@ -14,6 +14,7 @@ from .equation import (
     render_latex_to_png,
 )
 from .plot import (
+    Figure,
     PlotTrace,
     build_plot,
     build_plot_from_arrays,
@@ -35,27 +36,26 @@ from .tables import (
 )
 
 __all__ = [
-    # Plot
+    # Figure & Plot
+    "ColumnSpec",
+    "Figure",
+    "PVTCorner",
     "PlotTrace",
-    "format_axis_label",
-    "build_plot",
-    "build_waveform_plot",
-    "build_plot_from_arrays",
-    "build_plot_from_csv",
-    # Equation
-    "render_latex_to_png",
-    "latex_from_sympy",
+    "SpecItem",
     "build_equation",
     "build_equation_from_sympy",
-    # Tables
-    "ColumnSpec",
-    "SpecItem",
-    "PVTCorner",
-    "build_table",
-    "build_spec_table",
+    "build_plot",
+    "build_plot_from_arrays",
+    "build_plot_from_csv",
     "build_pvt_table",
-    "format_sigfigs",
+    "build_spec_table",
+    "build_table",
+    "build_waveform_plot",
+    "format_axis_label",
     "format_decimals",
     "format_engineering",
     "format_number",
+    "format_sigfigs",
+    "latex_from_sympy",
+    "render_latex_to_png",
 ]
