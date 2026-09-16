@@ -18,7 +18,10 @@ Block types handled:
   ``grid`` to a bold first row with no banding, ``striped`` to a bold first
   row with horizontal banding, and ``plain`` to neither. A ``table``-role
   placeholder is used when present; otherwise a table shape is placed in the
-  content flow. The caption paragraph is placed above the table.
+  content flow. The caption paragraph is placed above the table. Large tables
+  that exceed the slide vertical budget automatically split across continuation
+  slides, repeating table headers, preserving column widths and alignments,
+  and appending ``(continued)`` to the slide title.
 - ``image`` / ``plot``: picture inserted from the block ``source`` (a
   filesystem path, or an artifact reference looked up in
   ``binding["artifacts"]`` when the literal path does not exist), honoring
@@ -57,6 +60,7 @@ from pathlib import Path
 from typing import Any
 
 from pptx import Presentation
+from pptx.enum.text import PP_ALIGN
 from pptx.util import Emu, Inches, Pt
 
 from presenter.blocks.equation import render_latex_to_png
@@ -87,6 +91,13 @@ _TABLE_BANDING = {
     "grid": (True, False),
     "striped": (True, True),
     "plain": (False, False),
+}
+
+#: Cell alignment name -> python-pptx PP_ALIGN enum.
+_ALIGN_MAP = {
+    "left": PP_ALIGN.LEFT,
+    "center": PP_ALIGN.CENTER,
+    "right": PP_ALIGN.RIGHT,
 }
 
 # Placeholder-type names -> render-engine-facing role. Mirrors the role
@@ -191,6 +202,17 @@ def _estimate_box_height(text: str, width: int, font_pt: float) -> int:
     return int(lines * font_pt * 1.4 * 12700) + _EMU_PER_INCH // 10
 
 
+def _estimate_table_row_height(row: Sequence[Any]) -> int:
+    """Estimate row height (EMU) for a table row based on cell line counts."""
+    max_lines = 1
+    for cell in row:
+        lines = str(cell).count("\n") + 1
+        max_lines = max(max_lines, lines)
+    if max_lines <= 1:
+        return int(_MIN_TABLE_ROW_HEIGHT)
+    return max(int(_MIN_TABLE_ROW_HEIGHT), int(max_lines * Pt(14) * 1.4) + int(Pt(8)))
+
+
 class DeckWriter:
     """Slide-flow writer shared by :func:`render` and :func:`render_document`."""
 
@@ -208,6 +230,8 @@ class DeckWriter:
         self._slide_has_content = False
         self._used_placeholder_idxs: set[int] = set()
         self._cursor: int = int(_MARGIN)
+        self._current_layout_name: str | None = None
+        self._current_title: str | None = None
 
     @property
     def presentation(self) -> Presentation:
@@ -219,6 +243,8 @@ class DeckWriter:
         self, layout_name: str | None = None, title: str | None = None
     ) -> None:
         """Start a new slide, optionally on a named layout with a title."""
+        self._current_layout_name = layout_name
+        self._current_title = title
         layout = self._resolve_layout(layout_name)
         self._slide = self._prs.slides.add_slide(layout)
         self._slide_has_content = False
@@ -228,6 +254,7 @@ class DeckWriter:
             placeholder = self._take_placeholder("title")
             if placeholder is not None:
                 placeholder.text = str(title)
+                self._advance_past(placeholder)
 
     def set_notes(self, notes: str) -> None:
         """Set the current slide's speaker notes."""
@@ -280,6 +307,51 @@ class DeckWriter:
                 return placeholder
         return None
 
+    def _peek_placeholder(self, role: str) -> Any:
+        """Return the first unused placeholder with ``role`` without claiming it."""
+        layout = self._slide.slide_layout
+        for placeholder in self._slide.placeholders:
+            idx = placeholder.placeholder_format.idx
+            if idx in self._used_placeholder_idxs:
+                continue
+            if self._placeholder_role(layout, placeholder) == role:
+                return placeholder
+        return None
+
+    def _continuation_title(self) -> str:
+        """Return the slide title annotated with (continued) for table continuation."""
+        if self._current_title:
+            base = self._current_title.strip()
+            if not base.endswith("(continued)"):
+                return f"{base} (continued)"
+            return base
+        return "(continued)"
+
+    def _available_table_height(self) -> int:
+        """Compute maximum available vertical budget for a table on current slide."""
+        target_ph = self._peek_placeholder("table")
+        layout = self._slide.slide_layout
+        if target_ph is None:
+            for ph in self._slide.placeholders:
+                if ph.placeholder_format.idx in self._used_placeholder_idxs:
+                    continue
+                if self._placeholder_role(layout, ph) == "body":
+                    target_ph = ph
+                    break
+
+        if target_ph is not None:
+            slot_top = int(target_ph.top)
+            slot_bottom = int(target_ph.top + target_ph.height)
+            start_y = max(self._cursor, slot_top)
+            return max(0, slot_bottom - start_y)
+
+        slide_bottom = int(self._prs.slide_height) - int(_MARGIN)
+        for ph in self._slide.placeholders:
+            role = self._placeholder_role(layout, ph)
+            if role in ("footer", "date", "slide_number"):
+                slide_bottom = min(slide_bottom, int(ph.top) - int(_GAP))
+        return max(0, slide_bottom - self._cursor)
+
     def _find_placeholder(self, role: str) -> Any:
         """Return the current slide's first placeholder with ``role``.
 
@@ -298,11 +370,13 @@ class DeckWriter:
         style = str(block.get("style") or "body")
         text = str(block.get("text") or "")
         if style == "heading1":
+            self._current_title = text
             placeholder = self._take_placeholder("title")
             if placeholder is not None:
                 # A title fill does not count as slide content, so a slide
                 # titled before a toc block stays that slide's divider.
                 placeholder.text = text
+                self._advance_past(placeholder)
                 return
         elif style == "body":
             placeholder = self._find_placeholder("body")
@@ -380,48 +454,155 @@ class DeckWriter:
             self._add_caption_box(str(caption))
 
         ncols = len(headers) if headers else max((len(row) for row in rows), default=0)
-        nrows = (1 if headers else 0) + len(rows)
-        if ncols == 0 or nrows == 0:
+        if ncols == 0:
             return
 
-        table, anchor = self._place_table(nrows, ncols)
-        first_row, banding = _TABLE_BANDING.get(
-            str(block.get("style") or "grid"), (True, False)
+        if not headers and not rows:
+            return
+
+        style = str(block.get("style") or "grid")
+        alignments = block.get("alignments")
+        header_height = _estimate_table_row_height(headers) if headers else 0
+
+        # If current slide already has content and cannot fit even 1 data row, start new slide
+        min_first_row_h = (
+            _estimate_table_row_height(rows[0])
+            if rows
+            else int(_MIN_TABLE_ROW_HEIGHT)
         )
-        table.first_row = first_row
-        table.horz_banding = banding
+        min_needed = header_height + min_first_row_h
+        avail = self._available_table_height()
+        if self._slide_has_content and avail < min_needed:
+            self.new_slide(
+                layout_name=self._current_layout_name,
+                title=self._continuation_title(),
+            )
 
-        first_data_row = 0
-        if headers:
-            for col, header in enumerate(headers):
-                cell = table.cell(0, col)
-                cell.text = header
-                runs = cell.text_frame.paragraphs[0].runs
-                if runs:
-                    runs[0].font.bold = True
-            first_data_row = 1
+        remaining_rows = list(rows)
+        first_chunk = True
+        captured_col_widths: list[int] | None = None
 
-        for row_index, row in enumerate(rows):
-            for col in range(ncols):
-                table.cell(first_data_row + row_index, col).text = (
-                    row[col] if col < len(row) else ""
+        while remaining_rows or first_chunk:
+            available_height = self._available_table_height()
+            accumulated_h = header_height
+            count = 0
+            chunk_row_heights: list[int] = []
+            if headers:
+                chunk_row_heights.append(header_height)
+
+            for r in remaining_rows:
+                r_h = _estimate_table_row_height(r)
+                if count > 0 and (accumulated_h + r_h > available_height):
+                    break
+                accumulated_h += r_h
+                chunk_row_heights.append(r_h)
+                count += 1
+
+            if remaining_rows and count == 0:
+                count = 1
+                chunk_row_heights.append(_estimate_table_row_height(remaining_rows[0]))
+
+            chunk = remaining_rows[:count]
+            remaining_rows = remaining_rows[count:]
+
+            nrows = (1 if headers else 0) + len(chunk)
+            table, anchor = self._place_table(nrows, ncols, chunk_row_heights)
+
+            first_row, banding = _TABLE_BANDING.get(style, (True, False))
+            table.first_row = first_row
+            table.horz_banding = banding
+
+            # Capture or preserve identical column widths
+            if captured_col_widths is None:
+                captured_col_widths = [col.width for col in table.columns]
+            else:
+                for col_idx, width in enumerate(captured_col_widths):
+                    table.columns[col_idx].width = width
+
+            first_data_row = 0
+            if headers:
+                for col, header in enumerate(headers):
+                    cell = table.cell(0, col)
+                    cell.text = header
+                    for p in cell.text_frame.paragraphs:
+                        for run in p.runs:
+                            run.font.bold = True
+                        if alignments and col < len(alignments):
+                            align_key = str(alignments[col]).lower().strip()
+                            if align_key in _ALIGN_MAP:
+                                p.alignment = _ALIGN_MAP[align_key]
+                first_data_row = 1
+
+            for row_index, row_data in enumerate(chunk):
+                for col in range(ncols):
+                    cell = table.cell(first_data_row + row_index, col)
+                    cell.text = row_data[col] if col < len(row_data) else ""
+                    if alignments and col < len(alignments):
+                        align_key = str(alignments[col]).lower().strip()
+                        if align_key in _ALIGN_MAP:
+                            for p in cell.text_frame.paragraphs:
+                                p.alignment = _ALIGN_MAP[align_key]
+
+            self._slide_has_content = True
+            self._advance_past(anchor)
+            first_chunk = False
+
+            if remaining_rows:
+                self.new_slide(
+                    layout_name=self._current_layout_name,
+                    title=self._continuation_title(),
                 )
-        self._slide_has_content = True
-        self._advance_past(anchor)
 
-    def _place_table(self, nrows: int, ncols: int) -> tuple[Any, Any]:
+    def _place_table(
+        self, nrows: int, ncols: int, row_heights: Sequence[int] | None = None
+    ) -> tuple[Any, Any]:
         placeholder = self._take_placeholder("table")
         if placeholder is not None and hasattr(placeholder, "insert_table"):
-            return placeholder.insert_table(nrows, ncols), placeholder
+            table = placeholder.insert_table(nrows, ncols)
+            if row_heights:
+                for r_idx, r_h in enumerate(row_heights):
+                    if r_idx < len(table.rows):
+                        table.rows[r_idx].height = r_h
+            return table, placeholder
+
+        top = self._cursor
+        left = _MARGIN
+        width = self._content_width()
+        target_ph = placeholder
+        if target_ph is None:
+            layout = self._slide.slide_layout
+            for ph in self._slide.placeholders:
+                if (
+                    ph.placeholder_format.idx not in self._used_placeholder_idxs
+                    and self._placeholder_role(layout, ph) == "body"
+                ):
+                    target_ph = ph
+                    break
+        if target_ph is not None:
+            if self._cursor <= target_ph.top:
+                top = target_ph.top
+            left = target_ph.left
+            width = target_ph.width
+
+        total_height = (
+            sum(row_heights)
+            if row_heights
+            else int(_MIN_TABLE_ROW_HEIGHT) * nrows
+        )
         frame = self._slide.shapes.add_table(
             nrows,
             ncols,
-            _MARGIN,
-            self._cursor,
-            self._content_width(),
-            int(_MIN_TABLE_ROW_HEIGHT) * nrows,
+            left,
+            top,
+            width,
+            total_height,
         )
-        return frame.table, frame
+        table = frame.table
+        if row_heights:
+            for r_idx, r_h in enumerate(row_heights):
+                if r_idx < len(table.rows):
+                    table.rows[r_idx].height = r_h
+        return table, frame
 
     # -- pictures ------------------------------------------------------------
 
