@@ -135,37 +135,21 @@ hand-placed blocks: `title_bullets`, `title_single_image`,
 `split_half_text_images`, `two_column_bullets`, `bullets_and_table`, and
 `image_grid`.
 
-Library principle: prefer native PowerPoint features and layouts over
-reinventing what the format already provides.
-Each function selects the closest native PowerPoint slide layout (`"Title
-and Content"`, `"Two Content"`, `"Comparison"`, `"Picture with Caption"`),
-and only falls back to custom placement (`image_grid`, an arbitrary N-up
-grid no native layout offers) when no native layout fits the requested
-shape.
-`presenter.render_pptx` already resolves `layout` by exact name against the
-bound template's slide masters, so the shapes with a single content region
-(`title_bullets`, `title_single_image`) already place their content in the
-right native placeholder today.
-The two-region shapes (`split_half_text_images`, `two_column_bullets`,
-`bullets_and_table`) pick the right native layout today but still converge
-on that slide's one addressable body/picture/table placeholder until the
-render engine can claim a layout's peer placeholders separately; see
-`presenter/layouts/slides.py` for exactly which functions this affects and
-why.
+Library principle: prefer native PowerPoint features and layouts over reinventing what the format already provides.
+Each helper chooses a named native layout; `presenter/layouts/slides.py` owns the per-helper placement contract and the unimplemented image-grid limitation.
 
-Every function returns one plain dict shaped like a `SlideSpec`
-(`title`/`layout`/`notes`/`blocks`) plus a forward-compatible
-`placeholder_roles` map from an intended region label to the indices in
-`blocks` that belong there; the slide's own `title` field always carries the
-title placeholder and is never repeated in `blocks` or `placeholder_roles`.
-Like `presenter.blocks`, this package takes no `presenter.core` import and
-accepts plain strings and paths, but every block it returns has exactly the
-shape `presenter.core.blocks` would produce.
-`blocks` is already in top-to-bottom reading order, so it degrades
-gracefully to a DOCX section by simple vertical stacking (`layout` and
-`placeholder_roles` are ignored); mapping them onto real PPTX placeholders
-is render-engine work, not this package's.
-See `presenter/layouts/slides.py` for the full per-function contract.
+Every helper returns a plain dict accepted by `SlideSpec.from_dict` without stripping any fields.
+`placeholder_roles` maps region labels to lists of zero-based block indices; indices must be in range and assigned at most once.
+The optional `columns` hint is a positive integer retained for image grids, not a request for grid placement in either renderer.
+Both fields survive document JSON serialization and core normalization.
+The slide's `title` is never repeated in its blocks or region mapping.
+DOCX ignores layout hints and stacks the flat block list in reading order.
+
+PPTX tables use one shared region budget for placement and pagination, including native TABLE placeholders and occupied body regions.
+Captions travel with the first table chunk; continuation slides repeat headers, column widths, alignment, and the continued title, not the caption.
+A header or indivisible row that exceeds an empty region's estimated height raises `ValueError` instead of being placed off-slide.
+Row-height estimates use explicit cell line counts, not a general text-fitting or layout solver.
+Saved-output regressions live in `tests/presenter/render_pptx/test_render_regions.py`.
 
 ## End-to-end example
 

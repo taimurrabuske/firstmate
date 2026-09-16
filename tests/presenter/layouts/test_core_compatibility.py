@@ -2,8 +2,8 @@
 
 presenter.layouts itself never imports presenter.core (it mirrors the other
 decoupled lanes), but the blocks it hands back must still be indistinguishable
-from what presenter.core.blocks would produce, and the SlideSpec-shaped subset
-of each returned dict (title/layout/notes/blocks) must be a valid SlideSpec.
+from what presenter.core.blocks would produce, and each complete helper dict
+must round-trip through SlideSpec without stripping layout information.
 """
 
 from __future__ import annotations
@@ -20,8 +20,6 @@ from presenter.layouts import (
     title_single_image,
     two_column_bullets,
 )
-
-_SLIDE_SPEC_KEYS = ("title", "layout", "notes", "blocks")
 
 _SLIDES = [
     title_bullets("Overview", ["A", "B"]),
@@ -44,10 +42,10 @@ def test_every_block_validates_against_core_contract(slide: dict) -> None:
 
 
 @pytest.mark.parametrize("slide", _SLIDES)
-def test_slide_spec_subset_is_a_valid_slide_spec(slide: dict) -> None:
-    subset = {key: slide[key] for key in _SLIDE_SPEC_KEYS}
-    spec = SlideSpec.from_dict(subset)
-    assert spec.to_dict()["blocks"] == slide["blocks"]
+def test_complete_helper_is_a_lossless_slide_spec(slide: dict) -> None:
+    spec = SlideSpec.from_dict(slide)
+    assert spec.to_dict() == slide
+    assert SlideSpec.from_dict(spec.to_dict()).to_dict() == slide
 
 
 @pytest.mark.parametrize("slide", _SLIDES)
