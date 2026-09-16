@@ -29,7 +29,7 @@ __all__ = ["SPEC_VERSION", "SlideSpec", "DocumentSpec", "DocumentBuilder"]
 
 SPEC_VERSION = 1
 
-_SLIDE_KEYS = frozenset({"title", "layout", "notes", "blocks"})
+_SLIDE_KEYS = frozenset({"title", "layout", "notes", "blocks", "placeholder_roles", "columns"})
 _DOCUMENT_KEYS = frozenset(
     {"version", "title", "subtitle", "author", "metadata", "slides"}
 )
@@ -58,6 +58,8 @@ class SlideSpec:
     layout: str | None = None
     notes: str | None = None
     blocks: list[dict[str, Any]] = field(default_factory=list)
+    placeholder_roles: dict[str, list[int]] = field(default_factory=dict)
+    columns: int | None = None
 
     def add_block(self, block: Mapping[str, Any]) -> "SlideSpec":
         """Validate ``block`` and append its normalized form; returns ``self``."""
@@ -73,17 +75,41 @@ class SlideSpec:
                     f"{location}.{name} must be a string or null, got {type(value).__name__}"
                 )
         self.blocks = validate_blocks(self.blocks, location=f"{location}.blocks")
+        if not isinstance(self.placeholder_roles, Mapping):
+            raise SpecError(f"{location}.placeholder_roles must be a mapping")
+        roles: dict[str, list[int]] = {}
+        claimed: set[int] = set()
+        for role, indices in self.placeholder_roles.items():
+            if not isinstance(role, str) or not role:
+                raise SpecError(f"{location}.placeholder_roles keys must be non-empty strings")
+            if not isinstance(indices, list):
+                raise SpecError(f"{location}.placeholder_roles[{role!r}] must be a list")
+            for index in indices:
+                if type(index) is not int or not 0 <= index < len(self.blocks):
+                    raise SpecError(f"{location}.placeholder_roles[{role!r}]: invalid block index {index!r}")
+                if index in claimed:
+                    raise SpecError(f"{location}.placeholder_roles: block {index} assigned more than once")
+                claimed.add(index)
+            roles[role] = list(indices)
+        self.placeholder_roles = roles
+        if self.columns is not None and (type(self.columns) is not int or self.columns < 1):
+            raise SpecError(f"{location}.columns must be a positive integer or null")
         return self
 
     def to_dict(self) -> dict[str, Any]:
         """Return a plain JSON-serializable dict with normalized blocks."""
         self.validate()
-        return {
+        result = {
             "title": self.title,
             "layout": self.layout,
             "notes": self.notes,
             "blocks": [copy.deepcopy(b) for b in self.blocks],
         }
+        if self.placeholder_roles:
+            result["placeholder_roles"] = copy.deepcopy(self.placeholder_roles)
+        if self.columns is not None:
+            result["columns"] = self.columns
+        return result
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any], *, location: str = "slide") -> "SlideSpec":
@@ -96,7 +122,9 @@ class SlideSpec:
             layout=_optional_str(data, "layout", location),
             notes=_optional_str(data, "notes", location),
             blocks=validate_blocks(blocks, location=f"{location}.blocks"),
-        )
+            placeholder_roles=data.get("placeholder_roles", {}),
+            columns=data.get("columns"),
+        ).validate(location=location)
 
 
 @dataclass

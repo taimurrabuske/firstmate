@@ -1,11 +1,11 @@
 """Convenience builders for common design-review slide layouts.
 
 Each function returns one slide/layout spec dict: a plain, JSON-serializable
-structure shaped like :class:`presenter.core.spec.SlideSpec` (``title``,
-``layout``, ``notes``, ``blocks``) plus one forward-compatible key,
-``placeholder_roles``, that maps a native-layout placeholder role name to the
-indices in ``blocks`` that belong there.  No ``presenter.core`` import is
-needed here or by callers: every returned block dict has exactly the shape
+structure accepted losslessly by :class:`presenter.core.spec.SlideSpec`,
+including ``placeholder_roles``, which maps each native content region to
+its block indices, and the optional ``columns`` image-grid hint.
+No ``presenter.core`` import is needed here or by callers: every returned
+block dict has exactly the shape
 ``presenter.core.blocks`` would produce, so it composes with the core API
 (``SlideSpec.from_dict``, ``DocumentBuilder.add``) once the caller is ready
 to validate it, and it also stands alone as plain data.
@@ -17,29 +17,17 @@ Content", "Two Content", "Comparison", "Picture with Caption").
 ``presenter.render_pptx`` already resolves this today: ``render_document``
 looks the name up by exact match against the bound template's slide
 masters (``DeckWriter._resolve_layout``), so picking the right ``layout``
-value is load-bearing now, not just forward-looking.  Custom placement (no
-native layout fits the requested shape) is used only for :func:`image_grid`,
-and is called out in its own docstring.
+value is load-bearing now, not just forward-looking. The :func:`image_grid`
+helper has no native layout equivalent; its unimplemented custom-placement
+hint is called out in its own docstring.
 
-``placeholder_roles`` says which blocks are meant for which named region of
-that layout.  Today's ``presenter.render_pptx`` only claims placeholders by
-a fixed, block-type-driven role vocabulary - "title" (a ``heading1`` text
-block, handled automatically and never listed here), "body" (every
-``body``-style text block on a slide, merged into the *first* body-role
-placeholder it finds), "picture" (an image/plot block with no
-``width_in``), and "table" (a table block) - and it has no way yet to
-address two same-typed placeholders on one slide separately.  So a region
-label like ``"left"``/``"right"``/``"grid"`` is this function's own
-intended grouping, not yet a role the engine or a generated TemplateBinding
-distinguishes: on a native "Two Content" layout, whose two placeholders
-today both carry the auto-derived role "body", every body-style block from
-both regions currently lands in that same one placeholder in the order
-given, and an image without ``width_in`` falls back to a free-floating
-picture in the content flow because "Two Content" has no picture-role
-placeholder.  Teaching the engine (and the template lane's role inventory)
-to address multiple like-typed placeholders individually is follow-up
-work, not this package's; ``placeholder_roles`` exists so that work has
-something concrete to consume.
+``presenter.render_pptx`` routes ``left`` and ``right`` to the peer native
+content placeholders of Two Content or Comparison (and compatible custom
+layouts). Text fills its own placeholder; images and tables use that
+placeholder's geometry. Comparison headings fill the native heading
+placeholders above their columns. A missing or overlapping peer layout
+raises rather than silently collapsing two columns into one. ``grid`` and
+``columns`` remain preserved hints only; image-grid placement is not implemented.
 
 The slide's own ``title`` field always carries the native title
 placeholder; it is never repeated in ``blocks`` or ``placeholder_roles``.
@@ -48,9 +36,8 @@ Every function degrades gracefully to a DOCX section: rendering only needs
 ``title`` and the flat ``blocks`` list, which is already in top-to-bottom
 reading order (first region, then the next), so a DOCX engine that simply
 stacks blocks vertically (as ``presenter.render_docx`` does today) produces
-a sensible read even before a template maps ``layout``/``placeholder_roles``
-to real placeholders.  Mapping ``layout`` and ``placeholder_roles`` onto
-real PPTX placeholder shapes is engine work, not this package's.
+a sensible read without mapping ``layout``/``placeholder_roles`` to Word
+geometry. DOCX retains that vertical fallback.
 """
 
 from __future__ import annotations
@@ -229,13 +216,9 @@ def split_half_text_images(
     placeholders).  ``side`` names which half the images occupy; text
     takes the other half.  In ``blocks`` the ``"left"`` region's content
     always comes first regardless of which half it is, so DOCX still reads
-    top-to-bottom in on-slide left-to-right order.  Today's
-    ``presenter.render_pptx`` does not yet address the layout's two content
-    placeholders separately (see the package docstring), so until that
-    lands the text and images currently converge on this slide's single
-    body placeholder and a free-floating picture rather than a true visual
-    split; choosing "Two Content" still puts the right template in place
-    for when that follow-up work lands.
+    top-to-bottom in on-slide left-to-right order. PPTX fits the images
+    into their native peer content region, sharing its height when there
+    are multiple images, while the text fills the other placeholder.
     """
     _validate_side(side)
     bullets = _require_str_list("bullets", bullets)
@@ -269,13 +252,8 @@ def two_column_bullets(
     content placeholders each sit under their own heading placeholder,
     which is exactly what a headed column needs); plain "Two Content"
     otherwise.  A column heading, when given, becomes a ``heading2``-style
-    text block leading that column's blocks.  As with
-    :func:`split_half_text_images`, today's ``presenter.render_pptx``
-    merges every body-style block into this slide's single body
-    placeholder until it can address a layout's peer placeholders
-    separately (see the package docstring); the column headings still
-    render as their own text boxes today since ``heading2`` is not a
-    placeholder-claiming style.
+    text block leading that column's blocks. PPTX fills each column's
+    native content placeholder and, on Comparison, its heading placeholder.
     """
     left_bullets = _require_str_list("left_bullets", left_bullets)
     right_bullets = _require_str_list("right_bullets", right_bullets)
@@ -308,12 +286,10 @@ def bullets_and_table(
     Native layout: "Two Content", the same two-placeholder layout used by
     :func:`split_half_text_images`; a table is just another content type a
     "Two Content" placeholder can hold.  ``side`` names which half the
-    table occupies.  Today's ``presenter.render_pptx`` only claims a
-    table-role placeholder when the layout has one (stock "Two Content"
-    does not), so the table currently free-flows below the body text
-    rather than sitting in its own half; see the package docstring for the
-    same peer-placeholder-addressing gap :func:`split_half_text_images`
-    documents.
+    table occupies. PPTX keeps the caption and table inside that peer
+    region, leaving the bullets in the other native placeholder on the
+    first slide. Table continuations retain their region and repeat headers,
+    but do not repeat the caption or bullets.
     """
     _validate_side(side)
     bullets = _require_str_list("bullets", bullets)

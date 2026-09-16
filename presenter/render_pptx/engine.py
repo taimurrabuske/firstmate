@@ -163,7 +163,8 @@ def render_document(
     """Render a normalized ``DocumentSpec`` dict as a deck.
 
     This is the engine callable registered into ``presenter.core.render``.
-    Each entry of ``document["slides"]`` becomes exactly one slide: its
+    Each entry of ``document["slides"]`` starts one slide (tables may add
+    continuation slides): its
     ``title`` fills the slide's title placeholder, its ``layout`` names the
     slide layout (an unknown name raises), its ``notes`` becomes the slide's
     speaker notes, and its ``blocks`` render onto the slide through the same
@@ -177,8 +178,18 @@ def render_document(
         notes = slide_spec.get("notes")
         if notes:
             writer.set_notes(notes)
-        for block in slide_spec.get("blocks") or []:
-            writer.render_block(block)
+        roles = slide_spec.get("placeholder_roles") or {}
+        blocks = slide_spec.get("blocks") or []
+        writer.configure_regions(roles, blocks)
+        block_roles = {index: role for role, indices in roles.items() for index in indices}
+        order = list(range(len(blocks)))
+        if set(block_roles.values()) <= {"left", "right"} and len(block_roles) == len(blocks):
+            # Populate the static peer before a table can create continuations,
+            # even when that table is the left (first in reading order) region.
+            table_regions = {block_roles[i] for i in order if blocks[i].get("type") == "table"}
+            order.sort(key=lambda i: block_roles[i] in table_regions)
+        for index in order:
+            writer.render_block(blocks[index], region=block_roles.get(index))
     return _save(writer.presentation, output_path)
 
 
@@ -241,6 +252,13 @@ class DeckWriter:
         self._cursor: int = int(_MARGIN)
         self._current_layout_name: str | None = None
         self._current_title: str | None = None
+        self._text_placeholder_idxs: set[int] = set()
+        self._regions: dict[str, int] = {}
+        self._region_headings: dict[str, int] = {}
+        self._region_cursors: dict[str, int] = {}
+        self._active_region: str | None = None
+        self._flow_cursor = self._cursor
+        self._region_picture_remaining: dict[str, int] = {}
 
     @property
     def presentation(self) -> Presentation:
@@ -258,18 +276,87 @@ class DeckWriter:
         self._slide = self._prs.slides.add_slide(layout)
         self._slide_has_content = False
         self._used_placeholder_idxs = set()
+        self._text_placeholder_idxs = set()
+        self._regions = {}
+        self._region_headings = {}
+        self._region_cursors = {}
+        self._region_picture_remaining = {}
+        self._active_region = None
         self._cursor = int(_MARGIN)
         if title:
             placeholder = self._take_placeholder("title")
             if placeholder is not None:
                 placeholder.text = str(title)
                 self._advance_past(placeholder)
+        self._flow_cursor = self._cursor
+
+    def configure_regions(
+        self, roles: Mapping[str, Any], blocks: Sequence[Block] = ()
+    ) -> None:
+        """Bind left/right helper regions to peer native content placeholders.
+
+        Grid hints remain metadata only. Named non-peer roles retain the
+        ordinary block-driven behavior. No arbitrary placement solver is used.
+        """
+        if not ({"left", "right"} & roles.keys()):
+            return
+        if blocks:
+            self._region_picture_remaining = {
+                role: sum(blocks[i].get("type") in ("image", "plot") for i in indices)
+                for role, indices in roles.items()
+            }
+        layout = self._slide.slide_layout
+        candidates = [
+            ph for ph in self._slide.placeholders
+            if self._placeholder_role(layout, ph) in ("body", "left", "right")
+        ]
+        # Comparison has BODY headings above OBJECT content placeholders.
+        objects = [ph for ph in candidates if ph.placeholder_format.type.name == "OBJECT"]
+        peers = objects if len(objects) == 2 else candidates
+        if len(peers) != 2:
+            raise ValueError("left/right regions require two native content placeholders")
+        peers.sort(key=lambda ph: (ph.left, ph.top))
+        if peers[0].left + peers[0].width > peers[1].left:
+            raise ValueError("left/right regions require non-overlapping peer placeholders")
+        for role, ph in zip(("left", "right"), peers):
+            self._regions[role] = ph.placeholder_format.idx
+            self._region_cursors[role] = int(ph.top)
+            headings = [
+                h for h in candidates if h not in peers
+                and h.left == ph.left and h.top + h.height <= ph.top
+            ]
+            if headings:
+                self._region_headings[role] = headings[0].placeholder_format.idx
+
+    def _region_placeholder(self) -> Any:
+        if self._active_region is None:
+            return None
+        return self._slide.placeholders[self._regions[self._active_region]]
+
+    def _select_region(self, region: str | None) -> None:
+        if self._active_region is not None:
+            self._region_cursors[self._active_region] = self._cursor
+        else:
+            self._flow_cursor = self._cursor
+        self._active_region = region if region in self._regions else None
+        self._cursor = (
+            self._region_cursors[self._active_region]
+            if self._active_region is not None else self._flow_cursor
+        )
+
+    def _continue_slide(self) -> None:
+        region = self._active_region
+        roles = dict(self._regions)
+        self.new_slide(self._current_layout_name, self._continuation_title())
+        self.configure_regions(roles)
+        self._select_region(region)
 
     def set_notes(self, notes: str) -> None:
         """Set the current slide's speaker notes."""
         self._slide.notes_slide.notes_text_frame.text = str(notes)
 
-    def render_block(self, block: Block) -> None:
+    def render_block(self, block: Block, region: str | None = None) -> None:
+        self._select_region(region)
         block_type = block.get("type")
         handler = _HANDLERS.get(block_type)  # type: ignore[arg-type]
         if handler is None:
@@ -306,15 +393,10 @@ class DeckWriter:
 
     def _take_placeholder(self, role: str) -> Any:
         """Claim the first unused placeholder with ``role`` for one fill."""
-        layout = self._slide.slide_layout
-        for placeholder in self._slide.placeholders:
-            idx = placeholder.placeholder_format.idx
-            if idx in self._used_placeholder_idxs:
-                continue
-            if self._placeholder_role(layout, placeholder) == role:
-                self._used_placeholder_idxs.add(idx)
-                return placeholder
-        return None
+        placeholder = self._peek_placeholder(role)
+        if placeholder is not None:
+            self._used_placeholder_idxs.add(placeholder.placeholder_format.idx)
+        return placeholder
 
     def _peek_placeholder(self, role: str) -> Any:
         """Return the first unused placeholder with ``role`` without claiming it."""
@@ -322,6 +404,11 @@ class DeckWriter:
         for placeholder in self._slide.placeholders:
             idx = placeholder.placeholder_format.idx
             if idx in self._used_placeholder_idxs:
+                continue
+            if role != "title" and self._active_region is not None:
+                if idx != self._regions[self._active_region]:
+                    continue
+            elif idx in self._regions.values():
                 continue
             if self._placeholder_role(layout, placeholder) == role:
                 return placeholder
@@ -336,42 +423,22 @@ class DeckWriter:
             return base
         return "(continued)"
 
+    def _table_slot(self) -> tuple[Any, int, int, int, int]:
+        """One geometry source for both table budgeting and placement."""
+        target = self._region_placeholder()
+        if target is None:
+            target = self._peek_placeholder("table")
+        if target is None:
+            target = self._peek_placeholder("body")
+        bottom = self._content_bottom()
+        if target is not None:
+            return (target, int(target.left), max(self._cursor, int(target.top)),
+                    int(target.width), min(bottom, int(target.top + target.height)))
+        return None, self._content_left(), self._cursor, self._content_width(), bottom
+
     def _available_table_height(self) -> int:
-        """Compute maximum available vertical budget for a table on current slide."""
-        target_ph = self._peek_placeholder("table")
-        layout = self._slide.slide_layout
-        if target_ph is None:
-            for ph in self._slide.placeholders:
-                if ph.placeholder_format.idx in self._used_placeholder_idxs:
-                    continue
-                if self._placeholder_role(layout, ph) == "body":
-                    target_ph = ph
-                    break
-
-        if target_ph is not None:
-            slot_top = int(target_ph.top)
-            slot_bottom = int(target_ph.top + target_ph.height)
-            start_y = max(self._cursor, slot_top)
-            return max(0, slot_bottom - start_y)
-
-        slide_bottom = int(self._prs.slide_height) - int(_MARGIN)
-        for ph in self._slide.placeholders:
-            role = self._placeholder_role(layout, ph)
-            if role in ("footer", "date", "slide_number"):
-                slide_bottom = min(slide_bottom, int(ph.top) - int(_GAP))
-        return max(0, slide_bottom - self._cursor)
-
-    def _find_placeholder(self, role: str) -> Any:
-        """Return the current slide's first placeholder with ``role``.
-
-        Unlike :meth:`_take_placeholder` this ignores single-use claims: a
-        slide's body placeholder accumulates one paragraph per body block.
-        """
-        layout = self._slide.slide_layout
-        for placeholder in self._slide.placeholders:
-            if self._placeholder_role(layout, placeholder) == role:
-                return placeholder
-        return None
+        _ph, _left, top, _width, bottom = self._table_slot()
+        return max(0, bottom - top)
 
     # -- text ---------------------------------------------------------------
 
@@ -387,12 +454,33 @@ class DeckWriter:
                 placeholder.text = text
                 self._advance_past(placeholder)
                 return
+        elif style == "heading2" and self._active_region in self._region_headings:
+            placeholder = self._slide.placeholders[self._region_headings[self._active_region]]
+            placeholder.text = text
+            self._used_placeholder_idxs.add(placeholder.placeholder_format.idx)
+            self._slide_has_content = True
+            return
         elif style == "body":
-            placeholder = self._find_placeholder("body")
+            placeholder = self._region_placeholder()
+            if placeholder is None:
+                placeholder = next((
+                    ph for ph in self._slide.placeholders
+                    if self._placeholder_role(self._slide.slide_layout, ph) == "body"
+                    and (ph.placeholder_format.idx not in self._used_placeholder_idxs
+                         or ph.placeholder_format.idx in self._text_placeholder_idxs)
+                ), None)
             if placeholder is not None:
-                self._append_body_text(placeholder, text)
-                self._slide_has_content = True
-                return
+                idx = placeholder.placeholder_format.idx
+                if idx in self._text_placeholder_idxs or (
+                    idx not in self._used_placeholder_idxs
+                    and (self._cursor <= placeholder.top or not self._slide_has_content)
+                ):
+                    self._append_body_text(placeholder, text)
+                    self._used_placeholder_idxs.add(idx)
+                    self._text_placeholder_idxs.add(idx)
+                    self._advance_past(placeholder)
+                    self._slide_has_content = True
+                    return
         self._add_text_box(text, style)
         self._slide_has_content = True
 
@@ -407,8 +495,15 @@ class DeckWriter:
     def _add_text_box(self, text: str, style: str) -> None:
         font_pt = _TEXT_BOX_FONT_PT.get(style, 18.0)
         width = self._content_width()
+        height = _estimate_box_height(text, width, font_pt)
+        if style == "body" and self._cursor + height > self._content_bottom():
+            if not self._slide_has_content:
+                raise ValueError("body text cannot fit in an empty slide content region")
+            self._continue_slide()
+            self._add_text({"type": "text", "style": style, "text": text})
+            return
         box = self._slide.shapes.add_textbox(
-            _MARGIN, self._cursor, width, _estimate_box_height(text, width, font_pt)
+            self._content_left(), self._cursor, width, height
         )
         frame = box.text_frame
         frame.word_wrap = True
@@ -429,10 +524,12 @@ class DeckWriter:
         if isinstance(typeface, str) and typeface:
             font.name = typeface
 
-    def _add_caption_box(self, text: str, width: int | None = None) -> None:
+    def _add_caption_box(
+        self, text: str, width: int | None = None, left: int | None = None
+    ) -> None:
         box_width = int(width) if width else self._content_width()
         box = self._slide.shapes.add_textbox(
-            _MARGIN,
+            self._content_left() if left is None else left,
             self._cursor,
             box_width,
             _estimate_box_height(text, box_width, 12.0),
@@ -459,33 +556,35 @@ class DeckWriter:
                         f"the {len(headers)} header columns"
                     )
         caption = block.get("caption")
-        if caption:
-            self._add_caption_box(str(caption))
-
         ncols = len(headers) if headers else max((len(row) for row in rows), default=0)
-        if ncols == 0:
-            return
-
-        if not headers and not rows:
+        if ncols == 0 and not caption:
             return
 
         style = str(block.get("style") or "grid")
         alignments = block.get("alignments")
         header_height = _estimate_table_row_height(headers) if headers else 0
 
-        # If current slide already has content and cannot fit even 1 data row, start new slide
-        min_first_row_h = (
-            _estimate_table_row_height(rows[0])
-            if rows
-            else int(_MIN_TABLE_ROW_HEIGHT)
-        )
-        min_needed = header_height + min_first_row_h
-        avail = self._available_table_height()
-        if self._slide_has_content and avail < min_needed:
-            self.new_slide(
-                layout_name=self._current_layout_name,
-                title=self._continuation_title(),
+        # Keep the caption with the first chunk, including when the table
+        # must move off a slide whose body region already belongs to text.
+        min_needed = header_height + (_estimate_table_row_height(rows[0]) if rows and ncols else 0)
+        for attempt in range(2):
+            _ph, left, top, width, bottom = self._table_slot()
+            caption_height = (
+                _estimate_box_height(str(caption), width, 12.0) + int(_GAP)
+                if caption else 0
             )
+            if min_needed + caption_height <= bottom - top:
+                break
+            if attempt == 0 and self._slide_has_content:
+                self._continue_slide()
+            else:
+                raise ValueError("table header/row and caption cannot fit in an empty slide content region")
+        self._cursor = top
+        if caption:
+            self._add_caption_box(str(caption), width=width, left=left)
+            self._slide_has_content = True
+        if ncols == 0:
+            return
 
         remaining_rows = list(rows)
         first_chunk = True
@@ -501,15 +600,14 @@ class DeckWriter:
 
             for r in remaining_rows:
                 r_h = _estimate_table_row_height(r)
-                if count > 0 and (accumulated_h + r_h > available_height):
+                if accumulated_h + r_h > available_height:
                     break
                 accumulated_h += r_h
                 chunk_row_heights.append(r_h)
                 count += 1
 
-            if remaining_rows and count == 0:
-                count = 1
-                chunk_row_heights.append(_estimate_table_row_height(remaining_rows[0]))
+            if accumulated_h > available_height or (remaining_rows and count == 0):
+                raise ValueError("table header/row cannot fit in an empty slide content region")
 
             chunk = remaining_rows[:count]
             remaining_rows = remaining_rows[count:]
@@ -557,55 +655,24 @@ class DeckWriter:
             first_chunk = False
 
             if remaining_rows:
-                self.new_slide(
-                    layout_name=self._current_layout_name,
-                    title=self._continuation_title(),
-                )
+                self._continue_slide()
 
     def _place_table(
         self, nrows: int, ncols: int, row_heights: Sequence[int] | None = None
     ) -> tuple[Any, Any]:
-        placeholder = self._take_placeholder("table")
+        placeholder, left, top, width, bottom = self._table_slot()
+        total_height = sum(row_heights) if row_heights else int(_MIN_TABLE_ROW_HEIGHT) * nrows
+        if top + total_height > bottom:
+            raise ValueError("table exceeds its content region")
+        if placeholder is not None:
+            self._used_placeholder_idxs.add(placeholder.placeholder_format.idx)
         if placeholder is not None and hasattr(placeholder, "insert_table"):
-            table = placeholder.insert_table(nrows, ncols)
-            if row_heights:
-                for r_idx, r_h in enumerate(row_heights):
-                    if r_idx < len(table.rows):
-                        table.rows[r_idx].height = r_h
-            return table, placeholder
-
-        top = self._cursor
-        left = _MARGIN
-        width = self._content_width()
-        target_ph = placeholder
-        if target_ph is None:
-            layout = self._slide.slide_layout
-            for ph in self._slide.placeholders:
-                if (
-                    ph.placeholder_format.idx not in self._used_placeholder_idxs
-                    and self._placeholder_role(layout, ph) == "body"
-                ):
-                    target_ph = ph
-                    break
-        if target_ph is not None:
-            if self._cursor <= target_ph.top:
-                top = target_ph.top
-            left = target_ph.left
-            width = target_ph.width
-
-        total_height = (
-            sum(row_heights)
-            if row_heights
-            else int(_MIN_TABLE_ROW_HEIGHT) * nrows
-        )
-        frame = self._slide.shapes.add_table(
-            nrows,
-            ncols,
-            left,
-            top,
-            width,
-            total_height,
-        )
+            # insert_table returns a replacement GraphicFrame, not a Table;
+            # the original placeholder is invalid after the insertion.
+            frame = placeholder.insert_table(nrows, ncols)
+            frame.left, frame.top, frame.width = left, top, width
+        else:
+            frame = self._slide.shapes.add_table(nrows, ncols, left, top, width, total_height)
         table = frame.table
         if row_heights:
             for r_idx, r_h in enumerate(row_heights):
@@ -693,6 +760,27 @@ class DeckWriter:
         self._finish_picture(picture, block)
 
     def _finish_picture(self, picture: Any, block: Block) -> None:
+        region = self._region_placeholder()
+        if region is not None:
+            # Peer-region pictures fit inside their native content slot. Multiple
+            # images share its remaining height; this is not image-grid layout.
+            remaining = max(1, self._region_picture_remaining.get(self._active_region, 1))
+            available = (self._content_bottom() - self._cursor) // remaining
+            caption = block.get("caption")
+            caption_height = (
+                _estimate_box_height(str(caption), int(region.width), 12.0) + int(_GAP)
+                if caption else 0
+            )
+            height = available - caption_height - int(_GAP)
+            if height <= 0:
+                raise ValueError("picture and caption cannot fit in native content region")
+            if picture.height > height:
+                scale = height / picture.height
+                picture.width = int(picture.width * scale)
+                picture.height = height
+            picture.left = region.left
+            self._used_placeholder_idxs.add(region.placeholder_format.idx)
+            self._region_picture_remaining[self._active_region] = remaining - 1
         self._slide_has_content = True
         self._advance_past(picture)
         alt_text = block.get("alt_text")
@@ -703,7 +791,9 @@ class DeckWriter:
                 pass
         caption = block.get("caption")
         if caption:
-            self._add_caption_box(str(caption), width=int(picture.width))
+            self._add_caption_box(
+                str(caption), width=int(region.width if region is not None else picture.width)
+            )
 
     def _add_equation(self, block: Block) -> None:
         mode = block.get("mode") or self._binding.get("equation_mode")
@@ -853,8 +943,24 @@ class DeckWriter:
 
     # -- geometry -------------------------------------------------------------
 
+    def _content_left(self) -> int:
+        ph = self._region_placeholder()
+        return int(ph.left) if ph is not None else int(_MARGIN)
+
     def _content_width(self) -> int:
-        return int(self._prs.slide_width) - 2 * int(_MARGIN)
+        ph = self._region_placeholder()
+        return int(ph.width) if ph is not None else int(self._prs.slide_width) - 2 * int(_MARGIN)
+
+    def _content_bottom(self) -> int:
+        bottom = int(self._prs.slide_height) - int(_MARGIN)
+        for ph in self._slide.placeholders:
+            role = self._placeholder_role(self._slide.slide_layout, ph)
+            if role in ("footer", "date", "slide_number"):
+                bottom = min(bottom, int(ph.top) - int(_GAP))
+        region = self._region_placeholder()
+        if region is not None:
+            bottom = min(bottom, int(region.top + region.height))
+        return bottom
 
     def _advance_past(self, shape: Any) -> None:
         self._cursor = max(self._cursor, int(shape.top) + int(shape.height) + int(_GAP))
