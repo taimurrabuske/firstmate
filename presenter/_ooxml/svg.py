@@ -39,10 +39,17 @@ __all__ = [
 ]
 
 
+# Extension-less SVG assets (e.g. content-addressed artifact stores) are
+# detected by sniffing this many leading bytes for an <svg> or <?xml> marker.
+# A short window misses real-world SVGs that lead with a license comment or
+# DOCTYPE before the <svg> tag, silently misclassifying them as raster images.
+_SVG_SNIFF_WINDOW = 4096
+
+
 def is_svg_asset(source: str | Path | bytes) -> bool:
     """Return True if source represents an SVG file or SVG content."""
     if isinstance(source, bytes):
-        head = source[:256].strip()
+        head = source[:_SVG_SNIFF_WINDOW].strip()
         return head.startswith((b"<?xml", b"<svg")) or b"<svg" in head
     s = str(source).lower()
     if s.endswith(".svg"):
@@ -50,7 +57,8 @@ def is_svg_asset(source: str | Path | bytes) -> bool:
     p = Path(source)
     if p.is_file():
         try:
-            head = p.read_bytes()[:256].strip()
+            with p.open("rb") as f:
+                head = f.read(_SVG_SNIFF_WINDOW).strip()
             return head.startswith((b"<?xml", b"<svg")) or b"<svg" in head
         except (OSError, UnicodeDecodeError):
             pass
