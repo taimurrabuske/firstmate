@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+svg = ["cairosvg"]
 
 [tool.setuptools.packages.find]
 include = ["presenter*"]
@@ -27,3 +28,6 @@ include = ["presenter*"]
 testpaths = ["tests/presenter"]
 pythonpath = ["."]
 addopts = "--import-mode=importlib -p no:cacheprovider"
+markers = [
+  "svg_renderer: exercises a real installed SVG rasterizer (cairosvg, rsvg-convert, inkscape, or ImageMagick convert); skipped when none is installed",
+]

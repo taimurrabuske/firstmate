@@ -63,6 +63,13 @@ jobs:
           python-version: "3.12"
       - name: Install presenter with dev extras
         run: pip install -e ".[dev]"
+      # Explicitly provisions the SVG renderer the svg_renderer-marked tests
+      # need, rather than relying on whatever the runner image happens to
+      # ship, so that coverage is reproducible instead of an accident of the
+      # runner's preinstalled tools. presenter/README.md documents this and
+      # the alternative installation paths.
+      - name: Install SVG rasterizer (rsvg-convert)
+        run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
       - name: Run presenter pytest suite
         run: python -m pytest
 
