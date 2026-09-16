@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from PIL import Image
+
 import pytest
 import sympy as sp  # type: ignore[import-untyped]
+from PIL import Image
 
 # Ensure repository root is on sys.path
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -14,6 +15,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 from presenter.blocks.equation import (
@@ -129,3 +131,26 @@ def test_build_equation_from_sympy(tmp_path: Path) -> None:
     assert r"\frac{x}{x + y}" in block["latex"]
     assert out_png.exists()
     assert out_png.stat().st_size > 0
+
+
+def test_build_equation_native_mode() -> None:
+    """Verify build_equation with mode='native' sets mode key."""
+    block = build_equation(r"H(s) = \frac{1}{s}", mode="native", render_image=False)
+    assert block["type"] == "equation"
+    assert block["latex"] == r"H(s) = \frac{1}{s}"
+    assert block["mode"] == "native"
+    assert block["image"] is None
+
+
+def test_build_equation_native_flag() -> None:
+    """Verify build_equation with native=True sets mode='native'."""
+    block = build_equation(r"E = mc^2", native=True, render_image=False)
+    assert block["mode"] == "native"
+
+
+def test_build_equation_from_sympy_native_mode() -> None:
+    """Verify build_equation_from_sympy passes mode through."""
+    x = sp.Symbol("x")
+    block = build_equation_from_sympy(x**2, native=True, render_image=False)
+    assert block["mode"] == "native"
+    assert "x^{2}" in block["latex"]

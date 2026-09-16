@@ -29,8 +29,9 @@ plain dicts. ``render`` returns a plain summary dict.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from docx import Document
 from docx.document import Document as DocxDocument
@@ -38,6 +39,13 @@ from docx.enum.text import WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
+
+from presenter.blocks.equation import render_latex_to_png
+from presenter.omml import (
+    EquationConversionError,
+    convert_latex_to_docx_element,
+    omml_to_docx_element,
+)
 
 __all__ = ["render"]
 
@@ -85,9 +93,7 @@ def render(
     resolved_binding: Binding = binding or {}
     fmt = resolved_binding.get("format")
     if fmt is not None and fmt != "docx":
-        raise ValueError(
-            f"docx renderer requires binding format 'docx', got {fmt!r}"
-        )
+        raise ValueError(f"docx renderer requires binding format 'docx', got {fmt!r}")
     template = resolved_binding.get("template")
     if template:
         document = Document(str(template))
@@ -250,7 +256,9 @@ def _resolve_picture_source(source: str, binding: Binding) -> Path:
 
 def _add_picture_run(paragraph: Any, source: Path, width_in: float | None) -> None:
     run = paragraph.add_run()
-    run.add_picture(str(source), width=Inches(width_in) if width_in is not None else None)
+    run.add_picture(
+        str(source), width=Inches(width_in) if width_in is not None else None
+    )
 
 
 def _add_picture_block(
@@ -276,18 +284,70 @@ def _add_equation(
     binding: Binding,
     styles: Mapping[str, Any],
 ) -> None:
+    mode = block.get("mode") or binding.get("equation_mode")
     image = block.get("image")
-    if image:
-        resolved = _resolve_picture_source(str(image), binding)
+    latex = str(block.get("latex") or "")
+    omml_raw = block.get("omml")
+    caption = block.get("caption")
+
+    if mode is None:
+        if image:
+            mode = "image"
+        else:
+            mode = "monospace"
+
+    if mode in ("native", "native-preferred", "native-required"):
+        try:
+            if omml_raw:
+                omml_elem = omml_to_docx_element(str(omml_raw), display=True)
+            else:
+                omml_elem = convert_latex_to_docx_element(latex, display=True)
+            paragraph = document.add_paragraph()
+            paragraph._p.append(omml_elem)
+            if caption:
+                _add_caption(document, str(caption), styles)
+            return
+        except (EquationConversionError, Exception):
+            if mode == "native-required":
+                raise
+            # Fall back to high-resolution image rendering
+            fallback_img = image
+            if not fallback_img and latex:
+                try:
+                    font_size_pt = block.get("font_size_pt")
+                    size = float(font_size_pt) if font_size_pt is not None else 14.0
+                    fallback_img = str(render_latex_to_png(latex, font_size_pt=size))
+                except (ValueError, RuntimeError, OSError):
+                    fallback_img = None
+            if fallback_img:
+                resolved = _resolve_picture_source(str(fallback_img), binding)
+                paragraph = document.add_paragraph()
+                _add_picture_run(paragraph, resolved, None)
+                if caption:
+                    _add_caption(document, str(caption), styles)
+                return
+
+    if mode == "image" or image:
+        img_src = image
+        if not img_src and latex:
+            font_size_pt = block.get("font_size_pt")
+            size = float(font_size_pt) if font_size_pt is not None else 14.0
+            img_src = str(render_latex_to_png(latex, font_size_pt=size))
+        resolved = _resolve_picture_source(str(img_src), binding)
         paragraph = document.add_paragraph()
         _add_picture_run(paragraph, resolved, None)
+        if caption:
+            _add_caption(document, str(caption), styles)
         return
+
     paragraph = document.add_paragraph()
-    run = paragraph.add_run(str(block.get("latex") or ""))
+    run = paragraph.add_run(latex)
     run.font.name = "Courier New"
     font_size_pt = block.get("font_size_pt")
     if font_size_pt is not None:
         run.font.size = Pt(float(font_size_pt))
+    if caption:
+        _add_caption(document, str(caption), styles)
 
 
 def _add_toc(

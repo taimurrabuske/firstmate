@@ -29,6 +29,7 @@ __all__ = [
     "BLOCK_TYPES",
     "TEXT_STYLES",
     "TABLE_STYLES",
+    "EQUATION_MODES",
     "TextBlock",
     "TableBlock",
     "ImageBlock",
@@ -52,6 +53,13 @@ __all__ = [
 TEXT_STYLES: tuple[str, ...] = ("body", "heading1", "heading2", "caption")
 TABLE_STYLES: tuple[str, ...] = ("grid", "plain", "striped")
 TABLE_ALIGNMENTS: tuple[str, ...] = ("left", "center", "right")
+EQUATION_MODES: tuple[str, ...] = (
+    "native",
+    "native-preferred",
+    "native-required",
+    "image",
+    "monospace",
+)
 BLOCK_TYPES: frozenset[str] = frozenset(
     {"text", "table", "image", "plot", "equation", "toc", "pagebreak"}
 )
@@ -64,7 +72,7 @@ _ALLOWED_KEYS: dict[str, frozenset[str]] = {
     "table": frozenset({"caption", "headers", "rows", "style", "alignments"}),
     "image": frozenset({"source", "width_in", "caption"}),
     "plot": frozenset({"source", "width_in", "caption"}),
-    "equation": frozenset({"latex", "font_size_pt", "image"}),
+    "equation": frozenset({"latex", "font_size_pt", "image", "mode"}),
     "toc": frozenset(),
     "pagebreak": frozenset(),
 }
@@ -172,12 +180,15 @@ def validate_block(block: Mapping[str, Any], *, location: str | None = None) -> 
             "caption": _optional_str(block, "caption", location),
         }
     if block_type == "equation":
-        return {
+        res: dict[str, Any] = {
             "type": "equation",
             "latex": _require_str(block, "latex", location),
             "font_size_pt": _optional_positive_number(block, "font_size_pt", location),
             "image": _optional_str(block, "image", location),
         }
+        if "mode" in block and block["mode"] is not None:
+            res["mode"] = _choice(block, "mode", EQUATION_MODES, "native-preferred", location)
+        return res
     return {"type": block_type}
 
 
@@ -339,21 +350,35 @@ class PlotBlock:
 
 @dataclass(frozen=True)
 class EquationBlock:
-    """``{"type": "equation", "latex": ..., "font_size_pt": ..., "image": ...}``."""
+    """``{"type": "equation", "latex": ..., "font_size_pt": ..., "image": ..., "mode": ...}``."""
 
     latex: str
     font_size_pt: float | None = None
     image: str | None = None
+    mode: str | None = None
 
     @classmethod
     def from_dict(cls, block: Mapping[str, Any]) -> "EquationBlock":
         d = validate_block(block)
         if d["type"] != "equation":
             raise BlockValidationError(f"expected an equation block, got {d['type']!r}")
-        return cls(latex=d["latex"], font_size_pt=d["font_size_pt"], image=d["image"])
+        return cls(
+            latex=d["latex"],
+            font_size_pt=d["font_size_pt"],
+            image=d["image"],
+            mode=d.get("mode"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return validate_block({"type": "equation", **asdict(self)})
+        d: dict[str, Any] = {
+            "type": "equation",
+            "latex": self.latex,
+            "font_size_pt": self.font_size_pt,
+            "image": self.image,
+        }
+        if self.mode is not None:
+            d["mode"] = self.mode
+        return validate_block(d)
 
 
 @dataclass(frozen=True)
@@ -451,12 +476,22 @@ def plot(source: str, *, width_in: float | None = None, caption: str | None = No
 
 
 def equation(
-    latex: str, *, font_size_pt: float | None = None, image: str | None = None
+    latex: str,
+    *,
+    font_size_pt: float | None = None,
+    image: str | None = None,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     """Build a validated equation block."""
-    return validate_block(
-        {"type": "equation", "latex": latex, "font_size_pt": font_size_pt, "image": image}
-    )
+    d: dict[str, Any] = {
+        "type": "equation",
+        "latex": latex,
+        "font_size_pt": font_size_pt,
+        "image": image,
+    }
+    if mode is not None:
+        d["mode"] = mode
+    return validate_block(d)
 
 
 def toc() -> dict[str, Any]:
