@@ -31,6 +31,30 @@ Python 3.10 or newer is required.
 Runtime dependencies are `python-pptx`, `python-docx`, `matplotlib`, `sympy`, and `pillow`; `pytest` is the only development extra.
 The pytest configuration in `pyproject.toml` points at `tests/presenter`, so a bare `python -m pytest` from the repository root runs the library's suite and nothing else.
 
+## SVG rasterization
+
+SVG rasterization is optional and only needed when an `image` or `plot` block carries an `svg` without an explicit `fallback` PNG, so `presenter` never requires it just to render a deck or document.
+Supplying an explicit `fallback` bypasses rasterization entirely and needs no renderer at all.
+When automatic rasterization is needed, `presenter._ooxml.rasterize` looks for one of four supported renderers, in this order: the `cairosvg` Python package, then the `rsvg-convert`, `inkscape`, or ImageMagick `convert` command-line tools.
+`presenter._ooxml.rasterize.is_rasterizer_available()` and `available_rasterizers()` report what is detected at runtime, and rasterization raises `MissingRendererError` with install guidance when none is found.
+
+Install one of the following to enable it:
+
+```sh
+# cairosvg, a pip package (needs the system cairo library most Linux distros
+# already ship; see https://cairosvg.org/documentation/ for other platforms).
+pip install -e ".[svg]"
+
+# Or a system command-line renderer, any one of:
+sudo apt-get install librsvg2-bin   # rsvg-convert, Debian/Ubuntu
+brew install librsvg                # rsvg-convert, macOS
+sudo apt-get install inkscape       # inkscape
+sudo apt-get install imagemagick    # convert
+```
+
+CI installs `rsvg-convert` explicitly for the same reason a project pins any other tool version: reproducible coverage that does not depend on what a runner image happens to ship with.
+`tests/presenter/ooxml/test_rasterize.py` covers dispatch and error handling without needing a renderer; `tests/presenter/ooxml/test_rasterize_renderer.py` exercises a real installed renderer and is marked `svg_renderer`, skipping locally when none is installed.
+
 ## Core API
 
 Everything below is importable from `presenter.core`.
@@ -84,7 +108,7 @@ Validation rules layered on that contract by `presenter.core.blocks`:
   Native-preferred mode explicitly falls back to high-resolution image rendering when native math conversion encounters unsupported complex macros.
 - An `image` or `plot` block can carry an SVG vector image (via `svg` or an `.svg` `source`) alongside a raster `fallback` PNG.
   In PowerPoint (`.pptx`), this uses dual-relationship packaging (`asvg:svgBlip` referencing pure vector SVG alongside the PNG fallback) for razor-sharp vector zooming with full backwards compatibility.
-  When only an SVG is provided, a high-resolution PNG fallback is cleanly rasterized automatically.
+  When only an SVG is provided, a high-resolution PNG fallback is cleanly rasterized automatically; see "SVG rasterization" below for the renderer this requires.
 - Keys outside the contract are rejected, so a misspelled field fails validation instead of being ignored.
 
 ## Markdown input
