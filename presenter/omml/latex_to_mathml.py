@@ -259,10 +259,10 @@ def _clean_latex_input(latex: str) -> str:
 
     # Strip \begin{equation}...\end{equation}
     eq_match = re.match(
-        r"^\\begin\{equation\*?\}(.*?)\\end\{equation\*?\}$", s, re.DOTALL
+        r"^\\begin\{(equation\*?)\}(.*?)\\end\{\1\}$", s, re.DOTALL
     )
     if eq_match:
-        s = eq_match.group(1).strip()
+        s = eq_match.group(2).strip()
 
     if not s:
         raise EquationConversionError("LaTeX string cannot be empty")
@@ -381,6 +381,11 @@ class LaTeXParser:
         """Parse all tokens into a MathML <math> root element."""
         math = ET.Element(f"{{{MATHML_NS}}}math")
         elements = self.parse_sequence()
+        if self.peek() is not None:
+            tok = self.peek()
+            raise EquationConversionError(
+                f"unconsumed token {tok!r} near pos {tok.pos}"
+            )
         if len(elements) == 1 and elements[0].tag == f"{{{MATHML_NS}}}mrow":
             math.extend(list(elements[0]))
         else:
@@ -458,12 +463,17 @@ class LaTeXParser:
                 sub = self.parse_argument()
             elif tok.kind == "CHAR" and tok.value == "^":
                 self.advance()  # consume ^
-                sup = self.parse_argument()
+                argument = self.parse_argument()
+                if sup is None:
+                    sup = []
+                sup.extend(argument)
             elif tok.kind == "CHAR" and tok.value == "'":
                 self.advance()  # consume '
                 prime_mo = ET.Element(f"{{{MATHML_NS}}}mo")
                 prime_mo.text = "′"
-                sup = [prime_mo]
+                if sup is None:
+                    sup = []
+                sup.append(prime_mo)
             else:
                 break
 
@@ -490,6 +500,15 @@ class LaTeXParser:
         tok = self.peek()
         if tok is None:
             return None
+
+        # Sequence and environment parsers own these structural separators.
+        # They cannot serve as a required single-atom argument.
+        if (tok.kind == "CHAR" and tok.value in "}&") or (
+            tok.kind == "ESC_CHAR" and tok.value == "\\"
+        ):
+            raise EquationConversionError(
+                f"unexpected token {tok!r} near pos {tok.pos}"
+            )
 
         # Group: { ... }
         if tok.kind == "CHAR" and tok.value == "{":
@@ -609,7 +628,10 @@ class LaTeXParser:
             mover.append(mo)
             return mover
 
-        # Font formatting: \mathrm, \mathbf, \mathit, \text, \operatorname
+        if cmd == "text":
+            return self.parse_text_argument()
+
+        # Font formatting: \mathrm, \mathbf, \mathit, \operatorname
         if cmd in (
             "mathrm",
             "mathbf",
@@ -617,12 +639,10 @@ class LaTeXParser:
             "mathtt",
             "mathbb",
             "mathcal",
-            "text",
             "operatorname",
         ):
             variant_map = {
                 "mathrm": "normal",
-                "text": "normal",
                 "operatorname": "normal",
                 "mathbf": "bold",
                 "mathit": "italic",
@@ -632,7 +652,6 @@ class LaTeXParser:
             }
             variant = variant_map.get(cmd, "normal")
             arg_elems = self.parse_argument()
-            # If text, we can join texts into an mtext or mi
             mrow = ET.Element(f"{{{MATHML_NS}}}mrow")
             for elem in arg_elems:
                 if elem.tag in (f"{{{MATHML_NS}}}mi", f"{{{MATHML_NS}}}mn"):
@@ -662,6 +681,61 @@ class LaTeXParser:
 
         # If unknown macro: raise UnsupportedMacroError
         raise UnsupportedMacroError(cmd, f"unsupported LaTeX macro: \\{cmd}")
+
+    def parse_text_argument(self) -> ET.Element:
+        """Read a text group without losing whitespace discarded by the tokenizer."""
+        if not self.match("CHAR", "{"):
+            # Retain the existing single-atom argument support.
+            elems = self.parse_argument()
+            for elem in elems:
+                if elem.tag in (f"{{{MATHML_NS}}}mi", f"{{{MATHML_NS}}}mn"):
+                    elem.set("mathvariant", "normal")
+            return self._wrap_in_mrow(elems)
+
+        opening = self.advance()
+        cursor = opening.pos + 1
+        elems: list[ET.Element] = []
+        text = ""
+
+        def flush_text() -> None:
+            nonlocal text
+            if text:
+                elem = ET.Element(f"{{{MATHML_NS}}}mtext")
+                elem.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+                elem.text = text
+                elems.append(elem)
+                text = ""
+
+        while self.peek() is not None:
+            tok = self.peek()
+            text += self.raw_latex[cursor : tok.pos]
+            if tok.kind == "CHAR" and tok.value == "}":
+                self.advance()
+                flush_text()
+                return self._wrap_in_mrow(elems)
+            if tok.kind == "CHAR" and tok.value == "{":
+                flush_text()
+                elems.append(self.parse_text_argument())
+            elif tok.kind == "COMMAND":
+                # Keep the supported macro subset rather than treating unknown
+                # commands as literal text and silently claiming conversion.
+                flush_text()
+                elem = self.parse_command()
+                if elem.tag in (f"{{{MATHML_NS}}}mi", f"{{{MATHML_NS}}}mn"):
+                    elem.set("mathvariant", "normal")
+                elems.append(elem)
+            elif tok.kind == "ESC_CHAR" and tok.value not in "%&_{}# ":
+                flush_text()
+                elems.append(self.parse_atom())
+            else:
+                self.advance()
+                text += tok.value
+            last = self.tokens[self.pos - 1]
+            cursor = last.pos + len(last.value)
+            if last.kind in ("COMMAND", "ESC_CHAR"):
+                cursor += 1  # Include the backslash in the consumed source span.
+
+        raise EquationConversionError("unclosed \\text argument")
 
     def parse_left_right(self) -> ET.Element:
         """Parse \\left <delim> ... \\right <delim> into an <mfenced> or <mrow>."""
@@ -749,6 +823,11 @@ class LaTeXParser:
             elem = self.parse_expression()
             if elem is not None:
                 current_cell.append(elem)
+
+        else:
+            raise EquationConversionError(
+                rf"missing \end{{{env_name}}} to close environment"
+            )
 
         mtable = ET.Element(f"{{{MATHML_NS}}}mtable")
         for row in rows:

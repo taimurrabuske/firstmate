@@ -132,12 +132,15 @@ def test_render_binding_equation_mode_native_pptx(tmp_path: Path) -> None:
         assert p._p.find(f"{{{A14_NS}}}m") is not None
 
 
+@pytest.mark.parametrize(
+    "latex",
+    [r"\unknowncomplexmacro{x}", "x} + y", r"x & y", r"x \\ y", r"\begin{matrix}a & b"],
+)
 def test_render_native_preferred_fallback_to_image_pptx(
-    tmp_path: Path, png_image: Path
+    tmp_path: Path, png_image: Path, latex: str
 ) -> None:
-    """Verify unsupported complex macro falls back to image rendering in PPTX."""
+    """Invalid native input falls back to an image in native-preferred mode."""
     output = tmp_path / "fallback.pptx"
-    latex = r"\unknowncomplexmacro{x}"
 
     render(
         [
@@ -156,6 +159,54 @@ def test_render_native_preferred_fallback_to_image_pptx(
     slide = prs.slides[0]
     pictures = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE]
     assert len(pictures) == 1
+    assert not slide._element.findall(f".//{{{OMML_NS}}}oMath")
+
+
+def test_render_native_required_preserves_equation_semantics_pptx(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "semantics.pptx"
+    render(
+        [
+            {
+                "type": "equation",
+                "latex": r"\begin{bmatrix}f'''_i & \text{ steady  state } \\ c & d\end{bmatrix}",
+                "mode": "native-required",
+            }
+        ],
+        None,
+        output,
+    )
+    prs = Presentation(str(output))
+    slide = prs.slides[0]
+    assert not any(s.shape_type == MSO_SHAPE_TYPE.PICTURE for s in slide.shapes)
+    math = slide._element.find(f".//{{{A14_NS}}}m/{{{OMML_NS}}}oMath")
+    assert math is not None
+    rows = math.findall(f".//{{{OMML_NS}}}mr")
+    assert [["".join(cell.itertext()) for cell in row] for row in rows] == [
+        ["fi′′′", " steady  state "],
+        ["c", "d"],
+    ]
+    script = math.find(f".//{{{OMML_NS}}}sSubSup")
+    assert script is not None
+    assert "".join(script.find(f"{{{OMML_NS}}}e").itertext()) == "f"
+    assert "".join(script.find(f"{{{OMML_NS}}}sub").itertext()) == "i"
+    assert "".join(script.find(f"{{{OMML_NS}}}sup").itertext()) == "′′′"
+    text_run = next(
+        r
+        for r in math.findall(f".//{{{OMML_NS}}}r")
+        if r.find(f"{{{OMML_NS}}}t").text == " steady  state "
+    )
+    assert (
+        text_run.find(f"{{{OMML_NS}}}t").get(
+            "{http://www.w3.org/XML/1998/namespace}space"
+        )
+        == "preserve"
+    )
+    assert (
+        text_run.find(f"{{{OMML_NS}}}rPr/{{{OMML_NS}}}sty").get(f"{{{OMML_NS}}}val")
+        == "p"
+    )
 
 
 def test_render_native_preferred_dynamic_image_fallback_pptx(tmp_path: Path) -> None:
@@ -175,13 +226,22 @@ def test_render_native_preferred_dynamic_image_fallback_pptx(tmp_path: Path) -> 
     assert len(pictures) == 1
 
 
-def test_render_native_required_raises_on_unsupported_macro_pptx(
+@pytest.mark.parametrize(
+    "latex",
+    [
+        r"\unsupportedcomplexmacro{x}",
+        "x} + y",
+        r"x & y",
+        r"x \\ y",
+        r"\begin{matrix}a & b",
+    ],
+)
+def test_render_native_required_raises_on_invalid_input_pptx(
     tmp_path: Path,
+    latex: str,
 ) -> None:
-    """Verify native-required mode raises when unsupported macro is encountered in PPTX."""
+    """Native-required mode rejects invalid input instead of emitting partial math."""
     output = tmp_path / "error.pptx"
-    latex = r"\unsupportedcomplexmacro{x}"
-
     with pytest.raises((UnsupportedMacroError, EquationConversionError)):
         render(
             [{"type": "equation", "latex": latex, "mode": "native-required"}],
