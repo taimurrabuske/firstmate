@@ -11,6 +11,7 @@ from __future__ import annotations
 __all__ = [
     "BindingError",
     "CircuitFigureError",
+    "WaveformFigureError",
     "BlockValidationError",
     "EngineNotImplementedError",
     "MissingRendererError",
@@ -27,6 +28,10 @@ class PresenterError(Exception):
 
 class CircuitFigureError(PresenterError):
     """Native circuit integration or its evidence/asset binding is invalid."""
+
+
+class WaveformFigureError(PresenterError):
+    """Native waveform preparation or its portable evidence is invalid."""
 
 
 class SpecError(PresenterError):

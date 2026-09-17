@@ -27,6 +27,16 @@ from presenter.blocks.plot import (
 )
 
 
+# This suite pins the previous Matplotlib behavior under explicit opt-in.
+# Native defaults and fail-without-fallback behavior live in test_waveform.py.
+from functools import partial
+
+build_plot = partial(build_plot, backend="ordinary")
+build_plot_from_arrays = partial(build_plot_from_arrays, backend="ordinary")
+build_plot_from_csv = partial(build_plot_from_csv, backend="ordinary")
+build_waveform_plot = partial(build_waveform_plot, backend="ordinary")
+
+
 def test_format_axis_label() -> None:
     """Verify axis label formatting with units."""
     assert format_axis_label("Time", "s") == "Time [s]"

@@ -69,7 +69,9 @@ def main() -> Path:
     binding["artifacts"] = {schematic_ref: str(artifact_source.resolve_path(schematic_ref))}
 
     # Technical content blocks from presenter.blocks.
+    # Keep this base-install/Python 3.10 demo independent of optional native Qt.
     plot_block = build_plot(
+        backend="ordinary",
         x=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
         y=[3.30, 3.28, 3.05, 3.10, 3.29, 3.30],
         title="Load step response",

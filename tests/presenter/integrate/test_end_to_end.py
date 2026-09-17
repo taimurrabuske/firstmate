@@ -52,6 +52,7 @@ def rendered_docx(tmp_path: Path) -> Path:
     binding["artifacts"] = {ref: str(source.resolve_path(ref))}
 
     plot_block = build_plot(
+        backend="ordinary",
         x=[0.0, 1.0, 2.0], y=[1.0, 2.0, 1.5], caption="trace", output_path=tmp_path / "p.png"
     )
     equation_block = build_equation("a+b", output_path=tmp_path / "e.png")

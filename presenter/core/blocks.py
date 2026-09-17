@@ -70,8 +70,8 @@ BLOCK_TYPES: frozenset[str] = frozenset(
 _ALLOWED_KEYS: dict[str, frozenset[str]] = {
     "text": frozenset({"style", "text"}),
     "table": frozenset({"caption", "headers", "rows", "style", "alignments"}),
-    "image": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text", "circuit_origin"}),
-    "plot": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text", "circuit_origin"}),
+    "image": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text", "circuit_origin", "waveform_origin"}),
+    "plot": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text", "circuit_origin", "waveform_origin"}),
     "equation": frozenset({"latex", "font_size_pt", "image", "mode"}),
     "toc": frozenset(),
     "pagebreak": frozenset(),
@@ -195,6 +195,12 @@ def validate_block(block: Any, *, location: str | None = None) -> dict[str, Any]
             from presenter.circuit_origin import validate_origin
 
             d["circuit_origin"] = validate_origin(block["circuit_origin"], d)
+        if block.get("waveform_origin") is not None:
+            from presenter.waveform_origin import validate_origin
+
+            if block.get("circuit_origin") is not None:
+                raise _fail("a figure cannot have both circuit and waveform origins", location)
+            d["waveform_origin"] = validate_origin(block["waveform_origin"], d)
         return d
     if block_type == "equation":
         res: dict[str, Any] = {
@@ -338,6 +344,7 @@ class ImageBlock:
     svg: str | None = None
     alt_text: str | None = None
     circuit_origin: dict[str, Any] | None = None
+    waveform_origin: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, block: Mapping[str, Any]) -> "ImageBlock":
@@ -352,6 +359,7 @@ class ImageBlock:
             svg=d.get("svg"),
             alt_text=d.get("alt_text"),
             circuit_origin=d.get("circuit_origin"),
+            waveform_origin=d.get("waveform_origin"),
         )
 
     @classmethod
@@ -375,6 +383,7 @@ class PlotBlock:
     svg: str | None = None
     alt_text: str | None = None
     circuit_origin: dict[str, Any] | None = None
+    waveform_origin: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, block: Mapping[str, Any]) -> "PlotBlock":
@@ -389,6 +398,7 @@ class PlotBlock:
             svg=d.get("svg"),
             alt_text=d.get("alt_text"),
             circuit_origin=d.get("circuit_origin"),
+            waveform_origin=d.get("waveform_origin"),
         )
 
     @classmethod

@@ -199,6 +199,9 @@ def render(
     from presenter.circuit_origin import verify_circuit_blocks
 
     verify_circuit_blocks(document)
+    from presenter.waveform_origin import verify_waveform_blocks
+
+    verify_waveform_blocks(document)
     engine = get_engine(fmt)
     written = engine(document, checked, path)
     if written is None:

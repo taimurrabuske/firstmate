@@ -140,6 +140,9 @@ def render(
     Returns a plain JSON-serializable summary dict with ``format``,
     ``output_path``, ``template`` (path or None), and ``blocks_rendered``.
     """
+    from presenter.waveform_origin import verify_waveform_blocks
+
+    verify_waveform_blocks({"slides": [{"blocks": blocks}]})
     writer, template = _open_deck(binding)
     writer.new_slide()
     rendered = 0
@@ -149,6 +152,9 @@ def render(
     from presenter._ooxml.circuit import retain_circuit_evidence
 
     retain_circuit_evidence(writer.presentation.part, blocks, fmt="pptx")
+    from presenter._ooxml.waveform import retain_waveform_evidence
+
+    retain_waveform_evidence(writer.presentation.part, blocks, fmt="pptx")
     output = _save(writer.presentation, output_path)
     return {
         "format": "pptx",
@@ -173,6 +179,9 @@ def render_document(
     speaker notes, and its ``blocks`` render onto the slide through the same
     block handlers as :func:`render`.
     """
+    from presenter.waveform_origin import verify_waveform_blocks
+
+    verify_waveform_blocks(document)
     writer, _template = _open_deck(binding)
     for slide_spec in document.get("slides") or []:
         writer.new_slide(
@@ -196,6 +205,11 @@ def render_document(
     from presenter._ooxml.circuit import retain_circuit_evidence
 
     retain_circuit_evidence(writer.presentation.part,
+                            (block for slide in document.get("slides", []) for block in slide.get("blocks", [])),
+                            fmt="pptx")
+    from presenter._ooxml.waveform import retain_waveform_evidence
+
+    retain_waveform_evidence(writer.presentation.part,
                             (block for slide in document.get("slides", []) for block in slide.get("blocks", [])),
                             fmt="pptx")
     return _save(writer.presentation, output_path)

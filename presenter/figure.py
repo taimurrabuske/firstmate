@@ -41,6 +41,7 @@ class Figure:
     width_in: float | None = None
     representations: dict[str, Any] = field(default_factory=dict)
     circuit_origin: dict[str, Any] | None = None
+    waveform_origin: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         # Populate svg or png from representations if provided
@@ -126,6 +127,10 @@ class Figure:
             from presenter.circuit_origin import validate_origin
 
             block["circuit_origin"] = validate_origin(self.circuit_origin, block)
+        if self.waveform_origin is not None:
+            from presenter.waveform_origin import validate_origin
+
+            block["waveform_origin"] = validate_origin(self.waveform_origin, block)
         return block
 
     def to_dict(self) -> dict[str, Any]:
@@ -140,4 +145,6 @@ class Figure:
         }
         if self.circuit_origin is not None:
             result["circuit_origin"] = self.to_block()["circuit_origin"]
+        if self.waveform_origin is not None:
+            result["waveform_origin"] = self.to_block()["waveform_origin"]
         return result

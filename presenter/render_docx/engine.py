@@ -101,6 +101,9 @@ def render(
     Returns a plain JSON-serializable summary dict with ``format``,
     ``output_path``, ``template`` (path or None), and ``blocks_rendered``.
     """
+    from presenter.waveform_origin import verify_waveform_blocks
+
+    verify_waveform_blocks({"slides": [{"blocks": blocks}]})
     resolved_binding: Binding = binding or {}
     fmt = resolved_binding.get("format")
     if fmt is not None and fmt != "docx":
@@ -123,6 +126,9 @@ def render(
     from presenter._ooxml.circuit import retain_circuit_evidence
 
     retain_circuit_evidence(document.part, blocks, fmt="docx")
+    from presenter._ooxml.waveform import retain_waveform_evidence
+
+    retain_waveform_evidence(document.part, blocks, fmt="docx")
     document.save(str(output))
     return {
         "format": "docx",

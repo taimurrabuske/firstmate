@@ -27,7 +27,8 @@ pip install -e ".[dev]"
 python -m pytest
 ```
 
-Python 3.10 or newer is required.
+Python 3.10 or newer supports ordinary assets and explicit Matplotlib plots; native numeric plotting additionally requires Python 3.12-3.13 and the delivered Waveforms/Widgets packages (see "Waveform-native plots").
+Ordinary imports never load Qt or either optional waveform package.
 Runtime dependencies are `python-pptx`, `python-docx`, `matplotlib`, `sympy`, and `pillow`; `pytest` is the only development extra.
 The pytest configuration in `pyproject.toml` points at `tests/presenter`, so a bare `python -m pytest` from the repository root runs the library's suite and nothing else.
 
@@ -104,6 +105,65 @@ Third-party Office editing/resaving may strip custom parts, so verify retention 
 `tests/presenter/integrate/test_circuit_figures.py` exercises native selection, evidence round trips, invalid bindings, both Office packages, and Canvas-produced RC/two-level hierarchy artifacts.
 Native tests require the producer packages and skip explicitly when absent; run `python -m pytest tests/presenter` with those packages installed to validate the complete integration.
 
+## Waveform-native plots
+
+All numeric builders (`build_plot`, `build_waveform_plot`, `build_plot_from_arrays`, and `build_plot_from_csv`) default to Waveforms Widgets' native static producer.
+Install the delivered Waveforms and Waveforms Widgets packages with `waveforms_widgets.native_figure.produce_figure` / `reopen_figure` support in Python 3.12-3.13.
+They are deliberately lazy optional integrations rather than dependencies that raise Presenter's Python floor.
+Missing or incompatible dependencies raise `WaveformFigureError`; there is no silent Matplotlib fallback.
+Use `backend="ordinary"` explicitly for the previous Matplotlib behavior (the base-install datasheet demo does this).
+Explicit `image()`, `plot()`, and ordinary `Figure` asset transport is unchanged.
+
+```python
+from presenter.blocks import build_plot, waveform_figure
+from presenter.waveform_origin import read_office_waveform_origins, extract_waveform_bundle
+
+figure = build_plot(
+    x=[0, 1, 2], y={"Output": [0, 1, 0]},
+    x_label="Time", x_unit="s", y_label="Voltage", y_unit="V",
+    assets_dir="assets/waveforms", figsize=(6, 4), dpi=300, as_figure=True,
+    identities=[{"source": "simulation-42", "run": "run-7", "result": "tran", "signal": "vout"}],
+)
+# Direct scientific input also supports regular/ragged Waveform families.
+figure = waveform_figure(
+    [waveform], assets_dir="assets/waveforms",
+    request={"part": "real", "members": ((2, 0),), "max_curves": 2},
+    read_disclosure={"warnings": ["caller-supplied acquisition warning"]},
+)
+# No original source files or Qt are required to retrieve a saved Office bundle.
+origins = read_office_waveform_origins("report.docx")
+manifest_path = extract_waveform_bundle(origins[0], "new-extracted-bundle")
+# With Widgets installed, reopen_figure(manifest_path) reconstructs selected Waveforms.
+```
+
+`waveform_figure` is the single preparation seam; its `request` is the producer's strict `FigureRequest`, not an application session.
+The numeric builders translate labels/units, opaque colors (normalized to RGB hex), one shared line width, linear/log scales, complete finite limits, title, physical size and DPI once at that seam.
+Additional native options include `part`, `interpolation`, `members`, `max_curves`, `font_size_pt`, and `theme`.
+Complex display defaults to the producer's magnitude policy; `part="real"` or `"imag"` selects a component without truncating the original evidence.
+The producer owns grid/legend layout; Matplotlib-specific grid/legend overrides, dashed/marked/transparent traces, per-trace widths, partial bounds and unsupported digital semantics are refused with explicit ordinary-backend guidance.
+Digital masks, signedness and buses are not converted to analog by the delivered v1 producer.
+
+Native preparation always retains both SVG and PNG, regardless of the legacy `vector`/`format` preference.
+`assets_dir` owns content-addressed files; legacy `output_path` instead names a sibling `<output_path>.assets` directory, not an exact filename, and `fallback_output_path` is refused.
+With neither option, a managed temporary directory is returned; retain it alongside JSON specs until Office serialization.
+`width_in` sets the prepared physical width and scales height proportionally to `figsize`; changing it afterwards invalidates the binding.
+
+The separate `waveform_origin` v1 contract is owned by `presenter.waveform_origin`.
+It binds installed producer versions, explicit caller source/run/result/signal assertions, caller read disclosures, the closed producer manifest and lossless base64 bundle members, representation hashes, inches/DPI and a canonical SHA-256 binding.
+No identity is guessed from a display label.
+Original selected axes, coordinates, names, units, dtypes, complex components and ragged member axes remain in checked non-pickle NPY members; NaN and both infinities have explicit counts and preserve IEEE gap values.
+Selection, omitted family members, curve caps and native geometry budgets remain disclosed; omitted samples are not fingerprinted, and upstream acquisition read extent is explicitly unspecified unless the caller discloses it.
+Hashes detect corruption and stale data, not author authenticity.
+
+Figure, typed blocks and specification copy/JSON preserve evidence; validation rejects unsupported schemas, missing/mutated members, wrong visual references, unsafe external SVG content and stale bindings before rendering.
+PPTX retains SVG plus PNG visuals; DOCX displays PNG, while both formats retain the originals and closed scientific evidence as related package parts.
+`read_office_waveform_origins` verifies the package relationships and exact bytes, and `extract_waveform_bundle` writes a new closed producer bundle without source files or optional dependencies.
+External Office editors may strip custom parts on resave; verify retention after such processing.
+
+`tests/presenter/blocks/test_waveform.py` covers native defaults, ordinary opt-in, scientific cases, missing dependencies and evidence validation.
+`tests/presenter/integrate/test_waveform_office.py` verifies portable packaging and, when LibreOffice and Poppler are installed, actual rendered signal ink, endpoints, labels and physical size for both Office formats.
+Native tests explicitly skip when the optional producer is unavailable.
+
 ## Core API
 
 Everything below is importable from `presenter.core`.
@@ -158,7 +218,7 @@ Validation rules layered on that contract by `presenter.core.blocks`:
 - An `image` or `plot` block can carry an SVG vector image (via `svg` or an `.svg` `source`) alongside a raster `fallback` PNG.
   In PowerPoint (`.pptx`), this uses dual-relationship packaging (`asvg:svgBlip` referencing pure vector SVG alongside the PNG fallback) for razor-sharp vector zooming with full backwards compatibility.
   When only an SVG is provided, a high-resolution PNG fallback is cleanly rasterized automatically; see "SVG rasterization" below for the renderer this requires.
-- An image or plot can carry `circuit_origin`, the separately validated object described in "Circuit-native figures"; `png` is also accepted as the `fallback` alias.
+- An image or plot can carry `circuit_origin` or `waveform_origin`, the mutually exclusive evidence objects described in their native-figure sections; `png` is also accepted as the `fallback` alias.
 - Keys outside the contract are rejected, so a misspelled field fails validation instead of being ignored.
 
 ## Markdown input

@@ -8,6 +8,7 @@ shared block contract.
 from __future__ import annotations
 
 from .circuit import circuit_figure
+from .waveform import waveform_figure
 from .equation import (
     build_equation,
     build_equation_from_sympy,
@@ -39,6 +40,7 @@ from .tables import (
 __all__ = [
     # Figure & Plot
     "circuit_figure",
+    "waveform_figure",
     "ColumnSpec",
     "Figure",
     "PVTCorner",

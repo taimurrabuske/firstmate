@@ -1,8 +1,7 @@
 """Waveform and technical plot builders for presenter.
 
-Generates technical waveform and data plots from numeric arrays or CSV data,
-renders them via matplotlib using the Agg backend to PNG images, and returns
-standard plot block dicts for document/presentation render engines.
+Numeric builders default to the native Waveforms Widgets producer. Matplotlib
+is available only with backend='ordinary'; explicit asset transport is unchanged.
 """
 
 from __future__ import annotations
@@ -15,10 +14,6 @@ from pathlib import Path
 import tempfile
 from typing import Any, Mapping, Sequence, TextIO
 
-import matplotlib
-# Enforce headless rendering
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 
 from presenter.figure import Figure
@@ -81,7 +76,7 @@ def _ensure_output_path(
     return Path(tmp).resolve()
 
 
-def build_waveform_plot(
+def _ordinary_plot(
     traces: Sequence[PlotTrace | Mapping[str, Any]] | None = None,
     x: Sequence[float] | np.ndarray | None = None,
     y: Sequence[float] | np.ndarray | Sequence[Sequence[float]] | Mapping[str, Sequence[float]] | None = None,
@@ -180,6 +175,10 @@ def build_waveform_plot(
 
     if not plot_traces:
         raise ValueError("No plot data provided: pass traces or x and y data")
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
 
@@ -340,6 +339,57 @@ def build_waveform_plot(
         "caption": caption,
         "width_in": width_in,
     }
+
+
+def build_waveform_plot(
+    traces: Sequence[PlotTrace | Mapping[str, Any]] | None = None,
+    x: Sequence[float] | np.ndarray | None = None,
+    y: Sequence[float] | np.ndarray | Sequence[Sequence[float]] | Mapping[str, Sequence[float]] | None = None,
+    *,
+    backend: str = "waveforms",
+    as_figure: bool = False,
+    **kwargs: Any,
+) -> dict[str, Any] | Figure:
+    """Prepare numeric art with Waveforms by default, never silently fall back.
+
+    Use backend='ordinary' for the previous Matplotlib options/behavior.
+    Native output always retains SVG and PNG. output_path selects a sibling
+    managed .assets directory; assets_dir selects that directory directly.
+    """
+    if backend == "ordinary":
+        return _ordinary_plot(traces=traces, x=x, y=y, as_figure=as_figure, **kwargs)
+    from presenter.core.errors import WaveformFigureError
+    if backend != "waveforms":
+        raise WaveformFigureError("backend must be 'waveforms' or explicitly 'ordinary'")
+    normalized = []
+    if traces is not None:
+        for trace in traces:
+            if isinstance(trace, PlotTrace):
+                normalized.append(trace)
+            elif isinstance(trace, Mapping):
+                try:
+                    normalized.append(PlotTrace(**trace))
+                except TypeError as exc:
+                    raise WaveformFigureError(f"Unsupported trace record: {exc}") from exc
+            else:
+                raise WaveformFigureError("traces must contain PlotTrace or mapping records")
+    elif x is not None and y is not None:
+        if isinstance(y, Mapping):
+            normalized = [PlotTrace(x, values, label=str(name)) for name, values in y.items()]
+        elif isinstance(y, (list, tuple, np.ndarray)) and len(y) and isinstance(y[0], (list, tuple, np.ndarray)):
+            normalized = [PlotTrace(x, values, label=f"Trace {i + 1}") for i, values in enumerate(y)]
+        else:
+            normalized = [PlotTrace(x, y)]
+    if not normalized:
+        raise ValueError("No plot data provided: pass traces or x and y data")
+    from presenter.blocks.waveform import numeric_figure
+    try:
+        figure = numeric_figure(normalized, kwargs)
+    except WaveformFigureError:
+        raise
+    except Exception as exc:
+        raise WaveformFigureError(f"Native numeric plot request is invalid: {exc}") from exc
+    return figure if as_figure else figure.to_block("plot")
 
 
 def build_plot(
