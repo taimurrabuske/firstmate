@@ -196,6 +196,9 @@ def render(
             f"output path {path} must end in .{fmt} to match binding['format']={fmt!r}"
         )
     document = _document_dict(spec)
+    from presenter.circuit_origin import verify_circuit_blocks
+
+    verify_circuit_blocks(document)
     engine = get_engine(fmt)
     written = engine(document, checked, path)
     if written is None:

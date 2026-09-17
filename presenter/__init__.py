@@ -9,9 +9,9 @@ canonical block and TemplateBinding contracts.  ``presenter.core`` holds
 the specification model, block validation, and the render entry point.
 """
 
-from presenter.core.errors import MissingRendererError
+from presenter.core.errors import CircuitFigureError, MissingRendererError
 from presenter.figure import Figure
 
 __version__ = "2026.9.0"
 
-__all__ = ["__version__", "Figure", "MissingRendererError"]
+__all__ = ["__version__", "Figure", "CircuitFigureError", "MissingRendererError"]

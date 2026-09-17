@@ -70,8 +70,8 @@ BLOCK_TYPES: frozenset[str] = frozenset(
 _ALLOWED_KEYS: dict[str, frozenset[str]] = {
     "text": frozenset({"style", "text"}),
     "table": frozenset({"caption", "headers", "rows", "style", "alignments"}),
-    "image": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text"}),
-    "plot": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text"}),
+    "image": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text", "circuit_origin"}),
+    "plot": frozenset({"source", "width_in", "caption", "fallback", "png", "svg", "alt_text", "circuit_origin"}),
     "equation": frozenset({"latex", "font_size_pt", "image", "mode"}),
     "toc": frozenset(),
     "pagebreak": frozenset(),
@@ -191,6 +191,10 @@ def validate_block(block: Any, *, location: str | None = None) -> dict[str, Any]
             d["svg"] = _require_str(block, "svg", location)
         if "alt_text" in block and block["alt_text"] is not None:
             d["alt_text"] = _require_str(block, "alt_text", location)
+        if block.get("circuit_origin") is not None:
+            from presenter.circuit_origin import validate_origin
+
+            d["circuit_origin"] = validate_origin(block["circuit_origin"], d)
         return d
     if block_type == "equation":
         res: dict[str, Any] = {
@@ -333,6 +337,7 @@ class ImageBlock:
     fallback: str | None = None
     svg: str | None = None
     alt_text: str | None = None
+    circuit_origin: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, block: Mapping[str, Any]) -> "ImageBlock":
@@ -346,6 +351,7 @@ class ImageBlock:
             fallback=d.get("fallback"),
             svg=d.get("svg"),
             alt_text=d.get("alt_text"),
+            circuit_origin=d.get("circuit_origin"),
         )
 
     @classmethod
@@ -368,6 +374,7 @@ class PlotBlock:
     fallback: str | None = None
     svg: str | None = None
     alt_text: str | None = None
+    circuit_origin: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, block: Mapping[str, Any]) -> "PlotBlock":
@@ -381,6 +388,7 @@ class PlotBlock:
             fallback=d.get("fallback"),
             svg=d.get("svg"),
             alt_text=d.get("alt_text"),
+            circuit_origin=d.get("circuit_origin"),
         )
 
     @classmethod

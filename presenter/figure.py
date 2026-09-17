@@ -40,6 +40,7 @@ class Figure:
     alt_text: str | None = None
     width_in: float | None = None
     representations: dict[str, Any] = field(default_factory=dict)
+    circuit_origin: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         # Populate svg or png from representations if provided
@@ -121,11 +122,15 @@ class Figure:
             block["alt_text"] = self.alt_text
         if self.width_in is not None:
             block["width_in"] = self.width_in
+        if self.circuit_origin is not None:
+            from presenter.circuit_origin import validate_origin
+
+            block["circuit_origin"] = validate_origin(self.circuit_origin, block)
         return block
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize Figure properties to a plain dictionary."""
-        return {
+        result = {
             "source": str(self.source) if self.source else None,
             "svg": str(self.svg) if isinstance(self.svg, (str, Path)) else (self.svg is not None),
             "png": str(self.png) if isinstance(self.png, (str, Path)) else (self.png is not None),
@@ -133,3 +138,6 @@ class Figure:
             "alt_text": self.alt_text,
             "width_in": self.width_in,
         }
+        if self.circuit_origin is not None:
+            result["circuit_origin"] = self.to_block()["circuit_origin"]
+        return result

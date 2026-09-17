@@ -9,11 +9,6 @@ from presenter.omml.errors import EquationConversionError, UnsupportedMacroError
 
 MATHML_NS = "http://www.w3.org/1998/Math/MathML"
 
-try:
-    ET.register_namespace("", MATHML_NS)
-except (ValueError, KeyError):
-    pass
-
 # Greek letters mapping
 GREEK_LETTERS: dict[str, str] = {
     # Lowercase
@@ -874,4 +869,9 @@ def latex_to_mathml(latex: str) -> str:
     tokens = tokenizer.tokenize_all()
     parser = LaTeXParser(tokens, raw_latex=cleaned)
     math_elem = parser.parse_math()
+    # Serialize this single-namespace tree without changing ElementTree's global
+    # prefix registry: native circuit exporters also use a default namespace.
+    for element in math_elem.iter():
+        element.tag = element.tag.removeprefix(f"{{{MATHML_NS}}}")
+    math_elem.set("xmlns", MATHML_NS)
     return ET.tostring(math_elem, encoding="unicode")

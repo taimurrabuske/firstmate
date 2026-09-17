@@ -10,6 +10,7 @@ from __future__ import annotations
 
 __all__ = [
     "BindingError",
+    "CircuitFigureError",
     "BlockValidationError",
     "EngineNotImplementedError",
     "MissingRendererError",
@@ -22,6 +23,10 @@ __all__ = [
 
 class PresenterError(Exception):
     """Base class for every error raised by presenter."""
+
+
+class CircuitFigureError(PresenterError):
+    """Native circuit integration or its evidence/asset binding is invalid."""
 
 
 class SpecError(PresenterError):

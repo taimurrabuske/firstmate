@@ -120,6 +120,9 @@ def render(
     output = Path(output_path)
     if output.parent and str(output.parent):
         output.parent.mkdir(parents=True, exist_ok=True)
+    from presenter._ooxml.circuit import retain_circuit_evidence
+
+    retain_circuit_evidence(document.part, blocks, fmt="docx")
     document.save(str(output))
     return {
         "format": "docx",

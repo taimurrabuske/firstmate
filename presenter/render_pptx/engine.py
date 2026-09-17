@@ -146,6 +146,9 @@ def render(
     for block in blocks:
         writer.render_block(block)
         rendered += 1
+    from presenter._ooxml.circuit import retain_circuit_evidence
+
+    retain_circuit_evidence(writer.presentation.part, blocks, fmt="pptx")
     output = _save(writer.presentation, output_path)
     return {
         "format": "pptx",
@@ -190,6 +193,11 @@ def render_document(
             order.sort(key=lambda i: block_roles[i] in table_regions)
         for index in order:
             writer.render_block(blocks[index], region=block_roles.get(index))
+    from presenter._ooxml.circuit import retain_circuit_evidence
+
+    retain_circuit_evidence(writer.presentation.part,
+                            (block for slide in document.get("slides", []) for block in slide.get("blocks", [])),
+                            fmt="pptx")
     return _save(writer.presentation, output_path)
 
 

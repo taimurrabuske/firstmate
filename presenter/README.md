@@ -33,7 +33,8 @@ The pytest configuration in `pyproject.toml` points at `tests/presenter`, so a b
 
 ## SVG rasterization
 
-SVG rasterization is optional and only needed when an `image` or `plot` block carries an `svg` without an explicit `fallback` PNG, so `presenter` never requires it just to render a deck or document.
+SVG rasterization is optional for ordinary images and only needed when an `image` or `plot` block carries an `svg` without an explicit `fallback` PNG.
+Preparing a native circuit figure also requires rasterization, as described below.
 Supplying an explicit `fallback` bypasses rasterization entirely and needs no renderer at all.
 When automatic rasterization is needed, `presenter._ooxml.rasterize` looks for one of four supported renderers, in this order: the `cairosvg` Python package, then the `rsvg-convert`, `inkscape`, or ImageMagick `convert` command-line tools.
 `presenter._ooxml.rasterize.is_rasterizer_available()` and `available_rasterizers()` report what is detected at runtime, and rasterization raises `MissingRendererError` with install guidance when none is found.
@@ -54,6 +55,54 @@ sudo apt-get install imagemagick    # convert
 
 CI installs `rsvg-convert` explicitly for the same reason a project pins any other tool version: reproducible coverage that does not depend on what a runner image happens to ship with.
 `tests/presenter/ooxml/test_rasterize.py` covers dispatch and error handling without needing a renderer; `tests/presenter/ooxml/test_rasterize_renderer.py` exercises a real installed renderer and is marked `svg_renderer`, skipping locally when none is installed.
+
+## Circuit-native figures
+
+Use `presenter.blocks.circuit_figure` for technical circuit content.
+Its only implicit producer is Schematic's closed circuit-figure exporter, also used by Canvas; it never infers a circuit from a caption, parses a raw netlist, consults a live Canvas session, or substitutes generic art.
+Canvas canonical capture chooses Razavi symbols and resolves native hierarchy/connectivity before export; explicit Schematic input preserves its authored symbols and geometry rather than re-symbolizing it.
+Install a Schematic build providing `schematic.core.circuit_figure.export_circuit_figure` and `reopen_circuit_figure` with its dependencies, plus CairoSVG (`.[svg]`), librsvg, or Inkscape.
+Canvas itself is only required when producing a Canvas artifact, not when Presenter consumes one.
+
+```python
+from pathlib import Path
+from presenter.blocks import circuit_figure
+from presenter.core import DocumentBuilder
+
+# Consume the closed SVG returned by Canvas export_circuit_figure().
+figure = circuit_figure(Path("resolved-circuit.svg"), assets_dir="assets/circuits")
+spec = DocumentBuilder("Design report").slide("Circuit").add(figure).build()
+
+# Alternatively use an explicit SchematicData or schematic-document envelope.
+# Supply a SymbolLibrary or its closed SVG definitions, never an ambient palette.
+figure = circuit_figure(
+    schematic_document, symbols=symbol_library, assets_dir="assets/circuits",
+    width_in=4.0, request={"children": child_envelopes, "selected_path": ["Xstage"]},
+    caption="Selected stage",
+)
+```
+
+The helper prepares a `Figure` once, materializing content-addressed SVG and PNG files in `assets_dir`, then follows the existing image/block, DocumentBuilder, core render, and Office engine flow.
+Keep that managed directory with saved JSON specifications; the JSON contains asset paths and digests, never binary image bytes.
+The default raster density is 300 pixels/inch at the requested physical width, using 96-DPI SVG unit conversion so font sizes do not grow with raster density.
+An already-resolved artifact fixes its own width; to change it, re-export with the producer at the new size rather than overriding the bound width or images.
+Ordinary explicit `Figure`, `image`, and `plot` behavior is unchanged.
+
+Circuit blocks carry a separate `circuit_origin` v1 object, owned by `presenter.circuit_origin`.
+It retains the input source envelope (including its metadata/revision), the producer's complete closed payload, symbol definitions, child documents, selected occurrence, connectivity, annotation and analytical records, physical size, and both asset bindings.
+SHA-256 digests cover source, symbols, selected occurrence, hierarchy, annotations, analyses, producer payload, SVG, and PNG.
+These detect changed content, not author authenticity.
+Figure conversion, typed ImageBlock/PlotBlock access, and SlideSpec/DocumentSpec JSON round trips preserve the object; core rendering checks the actual asset bytes before engine dispatch.
+Missing dependencies, symbols, children, invalid occurrences, unsupported annotation content, and stale or mismatched representations raise `PresenterError` subclasses with a concrete diagnostic instead of drawing replacement art.
+
+PPTX retains SVG plus PNG visual relationships; DOCX displays PNG.
+Both saved Office packages additionally retain JSON evidence and exact SVG/PNG source parts under `presenter/`, reachable via the `urn:presenter:relationships:circuit-origin` relationship.
+Each manifest entry identifies the flattened engine-input block index and its `package_parts` retrieval addresses; the original local paths remain audit data, not external package dependencies.
+Extract these related parts to retrieve evidence without the original asset directory.
+Third-party Office editing/resaving may strip custom parts, so verify retention after such processing.
+
+`tests/presenter/integrate/test_circuit_figures.py` exercises native selection, evidence round trips, invalid bindings, both Office packages, and Canvas-produced RC/two-level hierarchy artifacts.
+Native tests require the producer packages and skip explicitly when absent; run `python -m pytest tests/presenter` with those packages installed to validate the complete integration.
 
 ## Core API
 
@@ -109,6 +158,7 @@ Validation rules layered on that contract by `presenter.core.blocks`:
 - An `image` or `plot` block can carry an SVG vector image (via `svg` or an `.svg` `source`) alongside a raster `fallback` PNG.
   In PowerPoint (`.pptx`), this uses dual-relationship packaging (`asvg:svgBlip` referencing pure vector SVG alongside the PNG fallback) for razor-sharp vector zooming with full backwards compatibility.
   When only an SVG is provided, a high-resolution PNG fallback is cleanly rasterized automatically; see "SVG rasterization" below for the renderer this requires.
+- An image or plot can carry `circuit_origin`, the separately validated object described in "Circuit-native figures"; `png` is also accepted as the `fallback` alias.
 - Keys outside the contract are rejected, so a misspelled field fails validation instead of being ignored.
 
 ## Markdown input

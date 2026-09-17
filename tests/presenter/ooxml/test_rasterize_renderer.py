@@ -73,6 +73,22 @@ def test_rasterize_svg_to_png_from_file(tmp_path: Path) -> None:
     result.unlink()
 
 
+@pytest.mark.parametrize("renderer", ["cairosvg", "rsvg-convert", "inkscape"])
+def test_exact_pixel_width_uses_each_available_vector_renderer(tmp_path, monkeypatch, renderer):
+    import presenter._ooxml.rasterize as rasterizers
+
+    if renderer not in available_rasterizers():
+        pytest.skip(f"{renderer} is not installed")
+    helpers = {"cairosvg": "_rasterize_with_cairosvg", "rsvg-convert": "_rasterize_with_rsvg",
+               "inkscape": "_rasterize_with_inkscape"}
+    for name, helper in helpers.items():
+        if name != renderer:
+            monkeypatch.setattr(rasterizers, helper, lambda *args, **kwargs: False)
+    result = rasterize_svg_to_png(_SVG_TEXT.encode(), tmp_path / "sized.png", dpi=96, output_width=1200)
+    with Image.open(result) as img:
+        assert img.size == (1200, 600)
+
+
 def test_rasterize_svg_to_png_from_bytes() -> None:
     """Verify rasterizing SVG from raw bytes without specifying output_path."""
     svg_bytes = _SVG_TEXT.encode("utf-8")
