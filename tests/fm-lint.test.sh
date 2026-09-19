@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 # Parity guard for firstmate's shell-lint definition.
 #
-# bin/fm-lint.sh must be the single owner that BOTH CI
-# (.github/workflows/ci.yml) and the pre-push gate (.no-mistakes.yaml
-# commands.lint) invoke, so the local lint can never diverge from CI again.
+# bin/fm-lint.sh is the single owner the pre-push gate invokes through
+# .no-mistakes.yaml commands.lint, keeping local deterministic lint consistent.
 # Regression origin: with no commands.lint configured, the local no-mistakes
 # lint step never ran the deterministic
-# `shellcheck bin/*.sh bin/backends/*.sh tests/*.sh`, so PRs passed local
-# validation yet failed that exact check in CI on info/warning findings such as
+# `shellcheck bin/*.sh bin/backends/*.sh tests/*.sh`, so changes passed incomplete local
+# validation yet failed that exact deterministic check later on info/warning findings such as
 # SC2015, SC1007, and SC2034. A second axis was tool-version skew: CI's
-# ShellCheck floated with the runner image and still emitted SC2015, which
-# ShellCheck retired in 0.11.0. fm-lint.sh now pins one exact version and both
-# gates resolve it, so command, file set, config, AND version all match.
+# ShellCheck version skew also emitted SC2015 after ShellCheck retired it in
+# 0.11.0. fm-lint.sh pins one exact version so command, file set, config, and
+# version remain stable.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -446,8 +445,8 @@ test_zero_changed_files_exits_clean() {
   [ "$rc" -eq 0 ] || fail "zero changed lint targets must exit 0, got $rc"$'\n'"$out"
   assert_contains "$out" "ShellCheck 0.11.0" "zero-changed run did not print the ShellCheck version line"
   assert_contains "$out" "no changed lint targets" "zero-changed run did not note the empty target set"
-  assert_contains "$out" "workflow files valid" \
-    "zero-changed run skipped workflow YAML validation"
+  assert_contains "$out" "hosted CI disabled" \
+    "zero-changed run skipped the no-workflow policy check"
   pass "fm-lint.sh exits 0 with a note when the local branch has no changed lint targets"
 }
 

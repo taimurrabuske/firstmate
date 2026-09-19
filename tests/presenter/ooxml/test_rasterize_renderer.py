@@ -5,7 +5,7 @@ resulting PNG. They are skipped when no renderer is installed, matching the
 existing pattern for optional-tool coverage elsewhere in this suite (see
 tests/presenter/render_pptx/test_render_svg_blip.py's LibreOffice check).
 
-CI provisions rsvg-convert explicitly (see .github/workflows/ci.yml) so this
+Local validation environments may provision rsvg-convert explicitly, so this
 module executes rather than skips in the presenter pytest job; presenter/README.md
 documents that installation path and the alternatives for local development.
 """

@@ -166,14 +166,14 @@ EOF
 YAML
 }
 
-test_current_workflows_pass() {
+test_current_no_workflow_policy_passes() {
   local out rc
   rc=0
   out=$("$LINT_WF" 2>&1) || rc=$?
-  [ "$rc" -eq 0 ] || fail "current workflows must parse, got $rc"$'\n'"$out"
-  assert_contains "$out" "workflow files valid" \
-    "current-workflow lint did not report a valid count"
-  pass "current .github/workflows YAML files parse"
+  [ "$rc" -eq 0 ] || fail "hosted-CI-disabled policy must pass, got $rc"$'\n'"$out"
+  assert_contains "$out" "hosted CI disabled" \
+    "no-workflow lint did not report the disabled policy"
+  pass "current repository has hosted CI disabled"
 }
 
 test_col0_heredoc_fails_with_clear_error() {
@@ -204,16 +204,16 @@ test_valid_fixture_passes() {
   pass "valid fixture workflow passes"
 }
 
-test_empty_workflows_dir_fails() {
+test_empty_workflows_dir_passes_disabled_policy() {
   local tmp out rc
   tmp=$(fm_test_tmproot fm-lint-wf-empty)
   mkdir -p "$tmp/.github/workflows"
   rc=0
   out=$("$LINT_WF" --root "$tmp" 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail "empty workflows dir unexpectedly passed"$'\n'"$out"
-  assert_contains "$out" "no GitHub workflow files found" \
-    "empty workflows dir did not report the missing files"
-  pass "empty workflows directory fails closed"
+  [ "$rc" -eq 0 ] || fail "empty workflows dir must represent disabled CI"$'\n'"$out"
+  assert_contains "$out" "hosted CI disabled" \
+    "empty workflows dir did not report the disabled policy"
+  pass "empty workflows directory represents disabled hosted CI"
 }
 
 test_explicit_broken_path_fails() {
@@ -515,10 +515,10 @@ SH
 }
 
 test_pins_an_explicit_version
-test_current_workflows_pass
+test_current_no_workflow_policy_passes
 test_col0_heredoc_fails_with_clear_error
 test_valid_fixture_passes
-test_empty_workflows_dir_fails
+test_empty_workflows_dir_passes_disabled_policy
 test_explicit_broken_path_fails
 test_non_mapping_root_fails
 test_missing_actionlint_fails_closed

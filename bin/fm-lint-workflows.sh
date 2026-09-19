@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # fm-lint-workflows.sh - owner of firstmate's GitHub workflow lint.
 #
-# Runs pinned actionlint on every .github/workflows/*.{yml,yaml} so a malformed
-# workflow, including a self-broken ci.yml, fails in the local and no-mistakes
-# lint lane before merge. A broken ci.yml cannot report its own breakage, so
-# this check must not live only as a step inside that workflow. bin/fm-lint.sh
-# invokes this owner on its default (no explicit-path) path, which CI and
-# commands.lint both use.
+# Runs pinned actionlint on explicit or repository-owned workflow files when any
+# exist. A repository with no workflow files is the supported hosted-CI-disabled
+# posture and succeeds without requiring actionlint. bin/fm-lint.sh invokes this
+# owner on its default (no explicit-path) path used by commands.lint.
 #
 # Usage:
 #   fm-lint-workflows.sh                 lint workflows under this repo
@@ -101,9 +99,9 @@ else
     FILES+=("$path")
   done < <(collect_workflow_files "$workflow_dir")
   if [ "${#FILES[@]}" -eq 0 ]; then
-    printf 'fm-lint-workflows.sh: no GitHub workflow files found under %s\n' \
-      "$workflow_dir" >&2
-    exit 1
+    printf 'fm-lint-workflows.sh: hosted CI disabled; no GitHub workflow files under %s\n' \
+      "$workflow_dir"
+    exit 0
   fi
 fi
 
@@ -116,7 +114,7 @@ ACTIONLINT_BIN=$(command -v actionlint)
 resolved=$("$ACTIONLINT_BIN" -version | awk 'NR==1 {print; exit}')
 printf 'fm-lint-workflows.sh: actionlint %s (pinned %s)\n' "$resolved" "$REQUIRED_ACTIONLINT" >&2
 if [ "$resolved" != "$REQUIRED_ACTIONLINT" ]; then
-  printf 'fm-lint-workflows.sh: actionlint %s required for CI parity, found %s. Install %s with bin/fm-install-actionlint.sh <destination-directory>.\n' \
+  printf 'fm-lint-workflows.sh: actionlint %s required for deterministic local lint, found %s. Install %s with bin/fm-install-actionlint.sh <destination-directory>.\n' \
     "$REQUIRED_ACTIONLINT" "$resolved" "$REQUIRED_ACTIONLINT" >&2
   exit 1
 fi
