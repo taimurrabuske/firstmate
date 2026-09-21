@@ -1,15 +1,43 @@
 #!/usr/bin/env bash
 # Ensure a project worktree follows the agent-memory file convention.
-# AGENTS.md is the real project-intrinsic knowledge file; CLAUDE.md is a
-# real regular file whose canonical content is the two-line @AGENTS.md pointer
-# that Claude Code inlines at load time. Creates a minimal AGENTS.md skeleton
-# when neither file exists, promotes a real CLAUDE.md file when it is the only
-# file present (unless it is already the canonical pointer), converts a correct
-# CLAUDE.md -> AGENTS.md symlink into the pointer file, and refuses to clobber
-# distinct real files or wrong symlinks.
+# Two correct layouts are accepted, chosen by what the repository itself
+# already carries; the helper never converts one correct layout into the
+# other.
+# - Pointer layout (created by default): AGENTS.md is the real
+#   project-intrinsic knowledge file and CLAUDE.md is a real regular file
+#   whose canonical content is the two-line @AGENTS.md pointer that Claude
+#   Code inlines at load time.
+# - Alias layout (accepted, never created): the repository's own convention
+#   keeps the real instructions in CLAUDE.md and carries AGENTS.md as a
+#   symlink to that file. A correct alias - one resolving to the sibling
+#   real CLAUDE.md - is preserved; the self-governance section is still
+#   injected idempotently through the link into the real instructions file,
+#   and no CLAUDE.md pointer is written there because CLAUDE.md is that
+#   file. Dangling or foreign AGENTS.md symlinks are refused.
+# Migration from the pointer layout, for a repository inside a workspace whose
+# own convention is the alias layout:
+#   mv AGENTS.md CLAUDE.md      # real memory replaces the disposable two-line pointer
+#   ln -s CLAUDE.md AGENTS.md   # re-create the alias (bare relative target)
+#   git add AGENTS.md CLAUDE.md
+# The swap is lossless because the canonical pointer's two lines are disposable
+# by design, git records the symlink as mode 120000, and the bare relative
+# target resolves inside fresh clones and linked worktrees alike. After it the
+# helper is idempotent ("unchanged: AGENTS.md -> CLAUDE.md alias layout"),
+# injecting the self-governance section once if it is missing. On hosts without
+# symlink support (Windows without core.symlinks=true plus developer mode) a
+# fresh clone materializes AGENTS.md as a small plain file; Linux and macOS
+# fleets are unaffected. The reverse direction - only when a repository leaves
+# the alias workspace - is: rm AGENTS.md, mv CLAUDE.md AGENTS.md, then write
+# the canonical two-line pointer into CLAUDE.md.
+# Creates a minimal AGENTS.md skeleton when neither file exists, promotes a
+# real CLAUDE.md file when it is the only file present (unless it is already
+# the canonical pointer), converts a correct CLAUDE.md -> AGENTS.md symlink
+# into the pointer file, and refuses to clobber distinct real files or wrong
+# symlinks.
 # Owns the canonical "## Maintaining this file" self-governance wording for
 # project AGENTS.md files, injecting it idempotently into created skeletons,
-# promoted CLAUDE.md files, and any existing AGENTS.md that still lacks it.
+# promoted CLAUDE.md files, any existing AGENTS.md that still lacks it, and,
+# through a correct AGENTS.md -> CLAUDE.md alias, the real instructions file.
 # Owns the canonical CLAUDE.md pointer content (the exact two-line @AGENTS.md
 # form). A real-file pointer cannot follow a write into AGENTS.md, which is why
 # the installer never creates a CLAUDE.md symlink.
@@ -148,6 +176,30 @@ PY
   return 1
 }
 
+# Alias layout: the repository's own convention keeps the real instructions in
+# CLAUDE.md and carries AGENTS.md as a plain symlink to it. Correct means the
+# link resolves to the sibling real CLAUDE.md - the bare or ./ relative form,
+# or any target whose resolved path is that same file. CLAUDE.md must be a
+# real regular file, so a dangling link, a foreign target, a two-link loop,
+# or a link chain never matches.
+is_correct_agents_alias() {
+  [ -L "$AGENTS" ] || return 1
+  [ -f "$CLAUDE" ] && [ ! -L "$CLAUDE" ] || return 1
+  target=$(readlink "$AGENTS")
+  case "$target" in
+    "$CLAUDE"|"./$CLAUDE") return 0 ;;
+  esac
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$AGENTS" "$CLAUDE" <<'PY'
+import os
+import sys
+sys.exit(0 if os.path.realpath(sys.argv[1]) == os.path.realpath(sys.argv[2]) else 1)
+PY
+    return $?
+  fi
+  return 1
+}
+
 # Refuse a case-variant real memory file (issue #389). On a case-insensitive
 # filesystem an existing lowercase agents.md satisfies every [ -e AGENTS.md ]
 # test below, so the script would emit a CLAUDE.md pointer whose @AGENTS.md
@@ -170,7 +222,24 @@ for entry in *; do
 done
 
 if [ -L "$AGENTS" ]; then
-  echo "conflict: AGENTS.md is a symlink in $DIR; expected AGENTS.md to be the real file" >&2
+  if is_correct_agents_alias; then
+    ensure_maintenance_section
+    if [ "$MAINT_INJECTED" -eq 1 ]; then
+      echo "updated: added ## Maintaining this file to the AGENTS.md -> CLAUDE.md alias in $DIR"
+    else
+      echo "unchanged: AGENTS.md -> CLAUDE.md alias layout in $DIR"
+    fi
+    exit 0
+  fi
+  if [ ! -e "$AGENTS" ]; then
+    echo "conflict: AGENTS.md is a broken symlink in $DIR; expected it to resolve to the real CLAUDE.md" >&2
+    exit 1
+  fi
+  if [ ! -f "$CLAUDE" ] || [ -L "$CLAUDE" ]; then
+    echo "conflict: AGENTS.md is a symlink in $DIR but CLAUDE.md is not a real file for it to alias" >&2
+    exit 1
+  fi
+  echo "conflict: AGENTS.md -> $(readlink "$AGENTS") in $DIR does not resolve to the real CLAUDE.md; an AGENTS.md alias must point at the repository's real instructions file" >&2
   exit 1
 fi
 if [ -e "$AGENTS" ] && [ ! -f "$AGENTS" ]; then

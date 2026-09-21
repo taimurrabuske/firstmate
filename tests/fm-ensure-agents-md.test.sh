@@ -26,6 +26,95 @@ write_fixture_claude_pointer() {
 EOF
 }
 
+test_agents_alias_layout_is_accepted_and_gains_self_governance() {
+  local repo out count
+  repo="$TMP_ROOT/agents-alias-project"
+  mkdir -p "$repo"
+  # shellcheck disable=SC2016 # Backticks are literal fixture Markdown.
+  printf '# Real instructions\n\nRun tests with `make test`.\n' > "$repo/CLAUDE.md"
+  ln -s CLAUDE.md "$repo/AGENTS.md"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
+    || fail "fm-ensure-agents-md.sh refused a correct AGENTS.md -> CLAUDE.md alias"
+  assert_contains "$out" "updated:" "alias layout did not gain the self-governance section"
+  [ -L "$repo/AGENTS.md" ] || fail "alias acceptance destroyed the AGENTS.md symlink"
+  [ "$(readlink "$repo/AGENTS.md")" = "CLAUDE.md" ] || fail "alias acceptance retargeted the symlink"
+  assert_grep "Run tests with \`make test\`." "$repo/CLAUDE.md" \
+    "alias acceptance clobbered the real CLAUDE.md"
+  if grep -Fq '@AGENTS.md' "$repo/CLAUDE.md"; then
+    fail "alias acceptance wrote the CLAUDE.md pointer over the real instructions"
+  fi
+  count=$(grep -Fc "## Maintaining this file" "$repo/CLAUDE.md")
+  [ "$count" -eq 1 ] || fail "alias injection wrote $count self-governance sections"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
+    || fail "fm-ensure-agents-md.sh refused the formed alias layout on re-run"
+  assert_contains "$out" "unchanged:" "formed alias layout was not reported unchanged"
+  count=$(grep -Fc "## Maintaining this file" "$repo/CLAUDE.md")
+  [ "$count" -eq 1 ] || fail "alias re-run wrote another self-governance section"
+  pass "fm-ensure-agents-md.sh: correct AGENTS.md -> CLAUDE.md alias is preserved and gains the section idempotently"
+}
+
+test_agents_alias_dot_relative_target_is_accepted() {
+  local repo out
+  repo="$TMP_ROOT/agents-alias-dot-project"
+  mkdir -p "$repo"
+  printf '# Real instructions\n\n## Maintaining this file\n\nKeep this file for knowledge useful to almost every future agent session in this project.\nDo not repeat what the codebase already shows; point to the authoritative file or command instead.\nPrefer rewriting or pruning existing entries over appending new ones.\nWhen updating this file, preserve this bar for all agents and keep entries concise.\n' > "$repo/CLAUDE.md"
+  ln -s ./CLAUDE.md "$repo/AGENTS.md"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1) \
+    || fail "fm-ensure-agents-md.sh refused a ./CLAUDE.md alias target"
+  assert_contains "$out" "unchanged:" "dot-relative alias layout was not reported unchanged"
+  [ -L "$repo/AGENTS.md" ] || fail "dot-relative acceptance destroyed the AGENTS.md symlink"
+  pass "fm-ensure-agents-md.sh: accepts a ./CLAUDE.md alias target"
+}
+
+test_agents_alias_dangling_symlink_is_refused() {
+  local repo out rc
+  repo="$TMP_ROOT/agents-alias-dangling-project"
+  mkdir -p "$repo"
+  ln -s CLAUDE.md "$repo/AGENTS.md"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit for a dangling AGENTS.md alias"
+  assert_contains "$out" "conflict:" "dangling alias did not report a conflict"
+  [ -L "$repo/AGENTS.md" ] || fail "dangling-alias refusal disturbed the symlink"
+  assert_absent "$repo/CLAUDE.md" "dangling-alias refusal created CLAUDE.md"
+  pass "fm-ensure-agents-md.sh: refuses a dangling AGENTS.md alias"
+}
+
+test_agents_alias_foreign_target_is_refused() {
+  local repo out rc
+  repo="$TMP_ROOT/agents-alias-foreign-project"
+  mkdir -p "$repo"
+  printf '# Real instructions\n' > "$repo/CLAUDE.md"
+  printf '# other\n' > "$repo/OTHER.md"
+  ln -s OTHER.md "$repo/AGENTS.md"
+  cp "$repo/CLAUDE.md" "$repo/.claude-before"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit for a foreign AGENTS.md alias target"
+  assert_contains "$out" "conflict:" "foreign alias target did not report a conflict"
+  assert_contains "$out" "OTHER.md" "foreign-alias refusal did not name the wrong target"
+  [ "$(readlink "$repo/AGENTS.md")" = "OTHER.md" ] || fail "foreign-alias refusal retargeted the symlink"
+  cmp -s "$repo/.claude-before" "$repo/CLAUDE.md" \
+    || fail "foreign-alias refusal modified CLAUDE.md"
+  pass "fm-ensure-agents-md.sh: refuses a foreign AGENTS.md alias target"
+}
+
+test_agents_alias_symlink_chain_is_refused() {
+  local repo out rc
+  repo="$TMP_ROOT/agents-alias-chain-project"
+  mkdir -p "$repo"
+  printf '# payload\n' > "$repo/payload.md"
+  ln -s payload.md "$repo/CLAUDE.md"
+  ln -s CLAUDE.md "$repo/AGENTS.md"
+  out=$("$ROOT/bin/fm-ensure-agents-md.sh" "$repo" 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "expected a non-zero exit when the alias target is itself a symlink"
+  assert_contains "$out" "conflict:" "symlink-chain alias did not report a conflict"
+  [ -L "$repo/AGENTS.md" ] && [ -L "$repo/CLAUDE.md" ] \
+    || fail "symlink-chain refusal disturbed the links"
+  pass "fm-ensure-agents-md.sh: refuses an AGENTS.md alias whose target is a symlink"
+}
+
 test_created_agents_md_includes_self_governance() {
   local repo agents
   repo="$TMP_ROOT/new-project"
@@ -369,3 +458,9 @@ test_agents_md_symlink_is_refused
 test_wrong_target_symlink_is_refused
 test_non_regular_claude_md_is_refused
 test_lowercase_agents_md_refuses_case_fragile_pointer
+# Alias layout: the repository's own AGENTS.md -> CLAUDE.md convention.
+test_agents_alias_layout_is_accepted_and_gains_self_governance
+test_agents_alias_dot_relative_target_is_accepted
+test_agents_alias_dangling_symlink_is_refused
+test_agents_alias_foreign_target_is_refused
+test_agents_alias_symlink_chain_is_refused
