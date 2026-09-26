@@ -1017,6 +1017,98 @@ test_own_and_absent_slot_claims_still_tear_down() {
   pass "fm-teardown: a task's own slot claim, and an unclaimed slot, both still tear down"
 }
 
+# Two surviving records on one slot, arbitrated by the claim: the record the
+# claim does not name retires through the reassigned path with the slot and the
+# other record untouched, the record the claim names still refuses while the
+# stale one exists and is told which teardown clears it, and an absent claim
+# keeps refusing from both sides
+# (test_reused_pool_slot_refuses_before_touching_the_other_task).
+write_two_records_on_one_slot() {  # <case> <stale> <owner>
+  local dir=$1 stale=$2 owner=$3
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    "window=firstmate:fm-$stale" "endpoint_task_id=$stale" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    "window=firstmate:fm-$owner" "endpoint_task_id=$owner" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner"
+}
+
+test_two_records_on_one_slot_retire_in_claim_order() {
+  local dir stale=stale-task owner=owner-task worker rc before after
+
+  # The stale record: its slot was handed on to owner-task, whose record also
+  # survives and whose worker is live in the slot right now.
+  dir=$(make_case slot-two-records-stale)
+  mark_case_as_treehouse_pool "$dir"
+  write_two_records_on_one_slot "$dir" "$stale" "$owner"
+  before=$(cat "$dir/home/state/$owner.meta")
+  ( cd "$dir/worktree" && exec sleep 30 ) &
+  worker=$!
+
+  set +e
+  run_case "$dir" "$stale" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] \
+    || fail "teardown of a stale record whose slot the claim gives to a surviving record failed: $(cat "$dir/stderr")"
+  kill -0 "$worker" 2>/dev/null || fail "retiring the stale record killed the worker holding the slot"
+  assert_present "$dir/worktree/sentinel" "retiring the stale record reset the slot"
+  assert_reassigned_slot_left_alone "$dir" "$stale" "$owner" "stale record beside a surviving owner record"
+  assert_present "$dir/home/state/$owner.meta" "retiring the stale record removed the owner's record"
+  after=$(cat "$dir/home/state/$owner.meta")
+  [ "$before" = "$after" ] || fail "retiring the stale record rewrote the owner's record"
+  kill "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+
+  # The owner's record: the claim names it, but the stale record still names
+  # its slot, so it refuses before touching anything and names the way out.
+  dir=$(make_case slot-two-records-owner)
+  mark_case_as_treehouse_pool "$dir"
+  write_two_records_on_one_slot "$dir" "$stale" "$owner"
+  ( cd "$dir/worktree" && exec sleep 30 ) &
+  worker=$!
+
+  set +e
+  run_case "$dir" "$owner" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "teardown returned a pool slot a stale record still names"
+  kill -0 "$worker" 2>/dev/null || fail "the owner's refusal killed the worker holding the slot"
+  assert_present "$dir/worktree/sentinel" "the owner's refusal reset the slot"
+  assert_present "$dir/home/state/$owner.meta" "the owner's refusal removed its own record"
+  assert_present "$dir/home/state/$stale.meta" "the owner's refusal removed the stale record"
+  assert_contains "$(cat "$dir/pool/1/.fm-slot-owner")" "task=$owner" \
+    "the owner's refusal rewrote its own slot claim"
+  [ ! -s "$dir/runtime.log" ] \
+    || fail "the owner's refusal reached the runtime: $(cat "$dir/runtime.log")"
+  assert_contains "$(cat "$dir/stderr")" "is also task $stale's recorded worktree" \
+    "the owner's refusal should name the stale record as the collision"
+  assert_contains "$(cat "$dir/stderr")" "bin/fm-teardown.sh $stale" \
+    "the owner's refusal should name the stale record's own teardown as the way out"
+
+  # The way out, in order: the stale record retires first, leaving the slot,
+  # its worker, and the owner's record alone; the owner then tears down as the
+  # sole record and returns its slot.
+  run_case "$dir" "$stale" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "retiring the stale record beside the refused owner failed: $(cat "$dir/stderr")"
+  kill -0 "$worker" 2>/dev/null || fail "retiring the stale record killed the owner's worker"
+  assert_present "$dir/worktree/sentinel" "retiring the stale record reset the owner's slot"
+  assert_reassigned_slot_left_alone "$dir" "$stale" "$owner" "stale record retired after the owner's refusal"
+  assert_present "$dir/home/state/$owner.meta" "retiring the stale record removed the owner's record"
+  kill "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+
+  run_case "$dir" "$owner" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "teardown of the owner after the stale record retired failed: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$owner.meta" "the owner's teardown left its record"
+  assert_absent "$dir/pool/1/.fm-slot-owner" "the owner's teardown left its spent slot claim behind"
+  grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "the owner's teardown did not return its own pool slot: $(cat "$dir/runtime.log")"
+
+  pass "fm-teardown: two records on one slot retire in claim order - the stale record first, leaving the slot alone, then the owner"
+}
+
 # The tmux shim used by the endpoint-close tests below: every subcommand
 # reaches the real isolated server, so presence is always read from real tmux.
 # When FM_TEST_BLOCK_KILL is set, `kill-window` alone fails without forwarding,
@@ -1404,6 +1496,7 @@ test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_own_and_absent_slot_claims_still_tear_down
+test_two_records_on_one_slot_retire_in_claim_order
 test_recorded_endpoint_that_changed_directory_still_tears_down
 test_project_lock_anchors_at_the_local_root_across_home_layouts
 test_remote_seeded_home_returns_its_uncontested_slot
