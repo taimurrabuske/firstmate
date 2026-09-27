@@ -1225,6 +1225,15 @@ backlog_record_reconcile() {
     label=$(basename "$marker" .backlog-close)
     meta_lock=$(fm_meta_lock_path "$STATE/$label.meta") || continue
     fm_lock_try_acquire "$meta_lock" || continue
+    # Finish the branch half of an interrupted cleanup while the task record
+    # can still name the project clone: bin/fm-branch-retire.sh is guarded,
+    # idempotent, filters to ship records itself, and refuses loudly without
+    # deleting. Its refusal never blocks the recorded close replayed below.
+    if ! branch_retire_out=$("$SCRIPT_DIR/fm-branch-retire.sh" "$label" 2>&1); then
+      printf 'BACKLOG_RECONCILE: %s: %s\n' "$label" "$branch_retire_out" >&2
+    elif [ -n "$branch_retire_out" ]; then
+      printf 'BOOTSTRAP_INFO: %s\n' "$branch_retire_out" >&2
+    fi
     if fm_backlog_close_marker_replay "$STATE" "$marker" "$DATA"; then
       case "$FM_BACKLOG_CLOSE_REPLAY_RESULT" in
         closed)

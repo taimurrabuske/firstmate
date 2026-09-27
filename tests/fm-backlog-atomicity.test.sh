@@ -1433,6 +1433,87 @@ test_recovery_replays_a_close_an_interrupted_cleanup_left_open() {
   pass "session start finishes a close an interrupted cleanup recorded but never landed"
 }
 
+# Session start also finishes the branch half of an interrupted ship cleanup:
+# while the task record can still name the project clone, the guarded
+# retirement step deletes the proven-landed task branch (bin/fm-branch-retire.sh).
+test_recovery_retires_a_ship_branch_during_close_replay() {
+  local case_dir id out home
+  id=atomic-branch-retire-b11
+  case_dir=$(make_home branch-retire-replay)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  # A landed ship branch the interrupted cleanup never retired: the branch was
+  # fast-forwarded into the project's local default branch (direct-push lane).
+  git -C "$case_dir/project" checkout -q -b "fm/$id"
+  printf 'landed\n' > "$case_dir/project/feature.txt"
+  git -C "$case_dir/project" add feature.txt
+  git -C "$case_dir/project" -c user.name=t -c user.email=t@t commit -qm "landed work"
+  git -C "$case_dir/project" checkout -q -
+  git -C "$case_dir/project" merge -q --ff-only "fm/$id"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=firstmate:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/absent-worktree" \
+    "project=$case_dir/project" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "yolo=off" \
+    "spawn_gen=spawn-retire"
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-retire\n' "$id" "$home/data" \
+    > "$home/state/$id.backlog-close"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "branch-retire replay left the item at $(row_state "$case_dir" "$id"): $out"
+  assert_absent "$home/state/$id.backlog-close" "a replayed close left its record behind"
+  if git -C "$case_dir/project" show-ref --verify --quiet "refs/heads/fm/$id"; then
+    fail "branch-retire replay retired the record but kept the landed task branch: $out"
+  fi
+  pass "session start finishes an interrupted cleanup's branch retirement during close replay"
+}
+
+# A branch still checked out in a live worktree is never deleted; the refusal
+# is reported as reconcile input while the recorded close still lands.
+test_recovery_replay_keeps_a_checked_out_branch_and_still_closes() {
+  local case_dir id out home
+  id=atomic-branch-keep-b11
+  case_dir=$(make_home branch-keep-replay)
+  home=$(home_of "$case_dir")
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  git -C "$case_dir/project" checkout -q -b "fm/$id"
+  printf 'landed\n' > "$case_dir/project/feature.txt"
+  git -C "$case_dir/project" add feature.txt
+  git -C "$case_dir/project" -c user.name=t -c user.email=t@t commit -qm "landed work"
+  git -C "$case_dir/project" checkout -q -
+  git -C "$case_dir/project" merge -q --ff-only "fm/$id"
+  git -C "$case_dir/project" worktree add -q "$case_dir/holder" "fm/$id"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=firstmate:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$case_dir/holder" \
+    "project=$case_dir/project" \
+    "harness=claude" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "yolo=off" \
+    "spawn_gen=spawn-retire"
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-retire\n' "$id" "$home/data" \
+    > "$home/state/$id.backlog-close"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "branch-keep replay left the item at $(row_state "$case_dir" "$id"): $out"
+  assert_absent "$home/state/$id.backlog-close" "a replayed close left its record behind"
+  if ! git -C "$case_dir/project" show-ref --verify --quiet "refs/heads/fm/$id"; then
+    fail "branch-keep replay deleted a branch still checked out in a live worktree"
+  fi
+  assert_contains "$out" "checked out" "the kept branch's refusal was not reported"
+  pass "a checked-out branch is kept, reported, and never blocks the recorded close"
+}
+
 test_recovery_backfills_a_recorded_link_on_an_already_done_item() {
   local case_dir id marker out
   id=atomic-heal-done-backfill-b9
@@ -2268,6 +2349,8 @@ test_recovery_marks_an_owned_record_in_flight
 test_recovery_rejects_an_internal_worker_record_symlink
 test_recovery_ignores_a_symlinked_worker_record
 test_recovery_replays_a_close_an_interrupted_cleanup_left_open
+test_recovery_retires_a_ship_branch_during_close_replay
+test_recovery_replay_keeps_a_checked_out_branch_and_still_closes
 test_recovery_backfills_a_recorded_link_on_an_already_done_item
 test_recovery_preserves_a_close_when_the_backlog_cannot_be_read
 test_recovery_retry_preserves_incomplete_cleanup_warning

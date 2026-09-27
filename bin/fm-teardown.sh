@@ -2913,6 +2913,19 @@ META_LOCK_HELD=0
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
+# Guarded, idempotent branch retirement: this ship task's cleanup has fully
+# succeeded (every landed-work gate passed, the isolated worktree was
+# returned, and the project clone was refreshed), so retire its proven-landed
+# local task branch from the project clone. bin/fm-branch-retire.sh owns every
+# guard, re-proves landing itself, and refuses loudly without deleting; its
+# refusal never fails a teardown that has already completed.
+# --force teardown keeps the branch: its work was explicitly discarded, so the
+# branch ref is the surviving copy and retirement must not erase it.
+# Meta is already gone here, so the project path is passed explicitly; the
+# branch candidates are still derived from the task id alone.
+if [ "$KIND" = ship ] && [ "$FORCE" != "--force" ]; then
+  "$SCRIPT_DIR/fm-branch-retire.sh" "$ID" --project "$PROJ" >&2 || true
+fi
 # A secondmate retirement may remove the home containing an overridden control
 # state directory. Do not let the side-band refresh recreate that retired home.
 if [ -d "$STATE" ]; then

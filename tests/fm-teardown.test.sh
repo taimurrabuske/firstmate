@@ -2605,6 +2605,53 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
+# An interrupted earlier cleanup returned the isolated worktree but never got
+# to the record removal or the branch: teardown reruns and the guarded
+# retirement step (bin/fm-branch-retire.sh) deletes the proven-landed branch
+# from the project clone.
+test_branch_retirement_after_interrupted_cleanup() {
+  local case_dir rc
+  case_dir=$(make_case branch-retire-interrupted)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello
+  land_on_origin_main "$case_dir" feature.txt hello
+  # The return already happened; its stale worktree registration and the task
+  # branch are what an interrupted cleanup leaves behind.
+  rm -rf "$case_dir/wt"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "branch-retire-interrupted: teardown should succeed: $(cat "$case_dir/stderr")"
+  if git -C "$case_dir/project" show-ref --verify --quiet refs/heads/fm/task-x1; then
+    fail "branch-retire-interrupted: the landed task branch survived a successful cleanup"
+  fi
+  pass "a successful ship cleanup retires the task's landed local branch from the project clone"
+}
+
+# A --force cleanup explicitly discarded the task's work, so the branch ref is
+# the surviving copy of that work and retirement must not erase it.
+test_force_teardown_keeps_the_task_branch() {
+  local case_dir rc
+  case_dir=$(make_case branch-retire-force-keeps)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt "unlanded work"
+  rm -rf "$case_dir/wt"
+
+  set +e
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "branch-retire-force-keeps: forced teardown should succeed: $(cat "$case_dir/stderr")"
+  if ! git -C "$case_dir/project" show-ref --verify --quiet refs/heads/fm/task-x1; then
+    fail "branch-retire-force-keeps: --force discarded the branch ref holding the surviving work"
+  fi
+  pass "a --force cleanup keeps the branch ref as the surviving copy of discarded work"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
@@ -2663,3 +2710,5 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_branch_retirement_after_interrupted_cleanup
+test_force_teardown_keeps_the_task_branch

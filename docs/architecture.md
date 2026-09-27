@@ -300,6 +300,7 @@ A confirmed merge leaves a durable role-routed outcome instead of living only in
 The same emitter handles a merge firstmate performed and one its poll detected, while the watcher immediately delivers the emitter's local actionable poll row.
 Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed before the worktree is returned.
 [`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns the landed-work proofs, PR-discovery fallback, and stale-lock recovery procedure.
+After a ship task's cleanup has fully succeeded, a guarded, idempotent retirement step deletes that task's proven-landed local branch (`fm/<id>`, legacy `fm-<id>`) from the project clone, and [`bin/fm-branch-retire.sh`](../bin/fm-branch-retire.sh)'s header owns the landing proofs and refusal guards; the session-start replay of an interrupted close finishes the same retirement while the task record can still name the project clone.
 
 ## Optional Relay
 
