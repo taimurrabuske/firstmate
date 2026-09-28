@@ -181,6 +181,7 @@ test_dirty_pool_refuses_without_discarding_work() {
   read_case_record "$rec"
   before=$(git -C "$POOL_DIR" rev-parse HEAD)
   printf 'keep this local work\n' > "$POOL_DIR/uncommitted.txt"
+  git -C "$POOL_DIR" config status.showUntrackedFiles no
 
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
@@ -584,6 +585,103 @@ test_teardown_requires_exact_custody() {
   pass 'guarded teardown refuses wrong/missing custody and releases the exact successful claim'
 }
 
+test_explicit_canonical_mapping_publishes_and_releases() {
+  local id=pool-canonical-linked out canonical claim token returned
+  read_case_record "$(make_case canonical-linked "$id")"
+  canonical=$PROJECT_DIR
+  PROJECT_DIR="$CASE_DIR/registered clone"
+  git clone --quiet "file://$CASE_DIR/origin.git" "$PROJECT_DIR"
+  git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$canonical"
+  out=$(FM_FAKE_ALLOCATION_LOG="$CASE_DIR/allocation.log" run_spawn "$id" --mode direct-PR --yolo off)
+  expect_code 0 "$?" "explicit canonical-linked spawn failed: $out"
+  assert_contains "$(cat "$CASE_DIR/allocation.log")" "cd '$canonical' && treehouse get" \
+    'allocation did not enter the explicit canonical repository'
+  claim="$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim"
+  token=$(grep '^treehouse_claim=' "$HOME_DIR/state/$id.meta" | cut -d= -f2-)
+  [ -n "$token" ] && [ -f "$claim/owner" ] || fail 'canonical-linked claim was skipped'
+  assert_grep 'v2' "$claim/owner" 'mapped claim did not bind the allocation source'
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$(git -C "$POOL_DIR" rev-parse origin/main)" ] \
+    || fail 'claimed canonical-linked slot did not freshen'
+  returned="$CASE_DIR/returned-from"
+  printf '#!/usr/bin/env bash\npwd -P > %q\n' "$returned" > "$FAKEBIN_DIR/treehouse"
+  # A mapping change cannot transfer an already published claim at cleanup.
+  git -C "$PROJECT_DIR" config --local --unset firstmate.treehouseRepository
+  if out=$(run_teardown "$id"); then fail 'removed canonical mapping authorized cleanup'; fi
+  [ ! -e "$returned" ] && [ -f "$claim/owner" ] || fail 'mapping refusal changed custody'
+  git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$canonical"
+  out=$(run_teardown "$id")
+  expect_code 0 "$?" "canonical-linked cleanup failed: $out"
+  [ "$(cat "$returned")" = "$canonical" ] || fail 'return resolved a different pool than acquire'
+  [ ! -e "$claim" ] || fail 'canonical-linked cleanup did not release its exact claim'
+  pass 'explicit canonical mapping allocates, publishes, freshens and returns in the same Git store'
+}
+
+test_canonical_mapping_rejects_wrong_store_and_missing_claim() {
+  local variant id out canonical wrong
+  for variant in wrong-store missing-claim; do
+    id="pool-canonical-$variant"
+    read_case_record "$(make_case "$id" "$id")"
+    canonical=$PROJECT_DIR
+    PROJECT_DIR="$CASE_DIR/registered"
+    git clone --quiet "file://$CASE_DIR/origin.git" "$PROJECT_DIR"
+    git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$canonical"
+    if [ "$variant" = wrong-store ]; then
+      wrong="$CASE_DIR/wrong-slot"
+      git -C "$PROJECT_DIR" worktree add --quiet --detach "$wrong" HEAD
+      POOL_DIR=$wrong
+    fi
+    commit_sentinel
+    record_git_calls
+    if out=$(FM_FAKE_SKIP_CLAIM=1 FM_FAKE_LAUNCH_LOG="$CASE_DIR/launch.log" run_spawn "$id" --mode direct-PR --yolo off); then
+      fail "canonical $variant allowed freshen or launch"
+    fi
+    assert_no_refresh_or_launch
+    assert_sentinel
+    [ ! -e "$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim" ] \
+      || fail 'canonical refusal manufactured a claim'
+  done
+  pass 'canonical mapping still refuses wrong-store and unpublished custody without touching unlanded bytes'
+}
+
+test_claimed_unlanded_head_refuses() {
+  local id=pool-claimed-unlanded out
+  read_case_record "$(make_case "$id" "$id")"
+  commit_sentinel
+  if out=$(run_spawn "$id" --mode direct-PR --yolo off); then fail 'freshen discarded a claimed unlanded HEAD'; fi
+  assert_contains "$out" 'unlanded or unverifiable commits' 'missing preservation refusal'
+  assert_sentinel
+  pass 'even valid custody cannot freshen away unlanded commits'
+}
+
+test_invalid_mapping_refuses_before_allocation() {
+  local variant id out mapping
+  for variant in relative empty duplicate subdirectory missing; do
+    id="pool-mapping-$variant"
+    read_case_record "$(make_case "$id" "$id")"
+    case "$variant" in
+      relative) mapping=../project ;;
+      empty) mapping= ;;
+      duplicate) mapping=$PROJECT_DIR ;;
+      subdirectory) mkdir "$PROJECT_DIR/subdir"; mapping="$PROJECT_DIR/subdir" ;;
+      missing) mapping="$CASE_DIR/absent" ;;
+    esac
+    git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$mapping"
+    if [ "$variant" = duplicate ]; then
+      git -C "$PROJECT_DIR" config --local --add firstmate.treehouseRepository "$mapping"
+    fi
+    if out=$(FM_FAKE_ALLOCATION_LOG="$CASE_DIR/allocation.log" run_spawn "$id" --mode direct-PR --yolo off); then
+      fail "$variant repository mapping permitted allocation: $out"
+    fi
+    [ ! -e "$CASE_DIR/allocation.log" ] || fail "$variant mapping reached Treehouse allocation"
+    [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$INITIAL_SHA" ] || fail 'invalid mapping changed HEAD'
+  done
+  pass 'invalid or ambiguous explicit repository mappings refuse before allocation'
+}
+
+test_invalid_mapping_refuses_before_allocation
+test_explicit_canonical_mapping_publishes_and_releases
+test_canonical_mapping_rejects_wrong_store_and_missing_claim
+test_claimed_unlanded_head_refuses
 test_separately_seeded_same_origin_refuses
 test_missing_and_incorrect_claim_refuse
 test_stale_same_store_path_cannot_claim_another_slot
