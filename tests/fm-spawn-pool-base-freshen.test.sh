@@ -6,7 +6,8 @@
 # These tests drive the real spawn path with a fake terminal, then prove it
 # starts the worker from the fetched origin/main tip or stops when origin is
 # unreachable.
-# Opt in to a real installed-provider recheck with FM_TEST_REAL_TREEHOUSE=1.
+# Opt in to a real provider recheck with FM_TEST_REAL_TREEHOUSE=1; optionally set
+# FM_TEST_TREEHOUSE_BIN to an absolute path to a staged, unmodified official binary.
 # That probe uses only test-owned repositories, HOME and explicit Treehouse root;
 # it never returns/resets a live slot or installs/patches the provider.
 set -u
@@ -656,6 +657,25 @@ test_claimed_unlanded_head_refuses() {
   pass 'even valid custody cannot freshen away unlanded commits'
 }
 
+test_treehouse_not_returned_preserves_claim() {
+  local id=pool-return-exit3 out claim before head
+  read_case_record "$(make_case "$id" "$id")"
+  out=$(run_spawn "$id" --mode direct-PR --yolo off)
+  expect_code 0 "$?" "exit-3 fixture spawn failed: $out"
+  claim="$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim"
+  before=$(cksum "$claim/owner")
+  head=$(git -C "$POOL_DIR" rev-parse HEAD)
+  printf '#!/usr/bin/env bash\necho attempted >> %q\necho "worktree not returned: cleaning declined" >&2\nexit 3\n' \
+    "$CASE_DIR/return-attempts" > "$FAKEBIN_DIR/treehouse"
+  if out=$(run_teardown "$id"); then fail 'Treehouse exit 3 was accepted as a successful return'; fi
+  assert_contains "$out" 'worktree not returned' 'return-aborted diagnostic lost'
+  [ "$(wc -l < "$CASE_DIR/return-attempts" | tr -d ' ')" = 1 ] || fail 'not-returned result was automatically retried'
+  [ "$(cksum "$claim/owner")" = "$before" ] || fail 'exit 3 released or rewrote the claim'
+  [ -f "$HOME_DIR/state/$id.meta" ] || fail 'exit 3 removed the task metadata'
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$head" ] || fail 'exit 3 changed retained HEAD'
+  pass 'Treehouse not-returned exit 3 refuses cleanup without retry or claim release'
+}
+
 test_invalid_mapping_refuses_before_allocation() {
   local variant id out mapping
   for variant in relative empty duplicate subdirectory missing; do
@@ -681,6 +701,18 @@ test_invalid_mapping_refuses_before_allocation() {
   pass 'invalid or ambiguous explicit repository mappings refuse before allocation'
 }
 
+fixture_treehouse() { # <binary> <canonical-repository> <fixture-dir> [args...]
+  local provider=$1 canonical=$2 fixture=$3
+  shift 3
+  # Placement and shell-origin environment from the worker must not escape the
+  # explicit fixture root, including when testing newer official releases.
+  (cd "$canonical" && env -u TREEHOUSE_DIR -u TREEHOUSE_WORKTREE_PATH \
+    -u TREEHOUSE_UNIQUE_LEAF -u TREEHOUSE_APFS_SHARING \
+    HOME="$fixture/provider-home" XDG_CONFIG_HOME="$fixture/provider-home/.config" \
+    XDG_CACHE_HOME="$fixture/provider-home/.cache" \
+    "$provider" --root "$fixture/provider-root" "$@")
+}
+
 # Opt-in provider capability probe: only disposable repositories, a private
 # HOME (no operator hooks/config), and an explicit root beneath this fixture.
 # No shared pool is discovered, no lease record is edited, and no return/reset
@@ -690,7 +722,9 @@ test_invalid_mapping_refuses_before_allocation() {
 test_installed_treehouse_lease_and_canonical_claim() {
   [ "${FM_TEST_REAL_TREEHOUSE:-0}" = 1 ] || return 0
   local id=pool-real-provider provider version provider_bytes canonical first second third first_path second_path third_path out before claim clean_head
-  provider=$(command -v treehouse) || fail 'real provider probe requires installed treehouse'
+  provider=${FM_TEST_TREEHOUSE_BIN:-$(command -v treehouse)}
+  case "$provider" in /*) ;; *) fail 'real provider probe requires an absolute executable path' ;; esac
+  [ -x "$provider" ] || fail 'real provider probe requires an executable treehouse binary'
   version=$("$provider" --version) || fail 'cannot read installed treehouse version'
   provider_bytes=$(cksum "$provider") || fail 'cannot identify installed provider bytes'
   printf '# installed provider: %s %s\n' "$provider" "$version"
@@ -701,8 +735,7 @@ test_installed_treehouse_lease_and_canonical_claim() {
   git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$canonical"
   git -C "$canonical" fetch --quiet origin
   mkdir -p "$CASE_DIR/provider-home" "$CASE_DIR/provider-root"
-  first=$(cd "$canonical" && HOME="$CASE_DIR/provider-home" \
-    "$provider" --root "$CASE_DIR/provider-root" get --lease --json --no-fetch --lease-holder "$id") \
+  first=$(fixture_treehouse "$provider" "$canonical" "$CASE_DIR" get --lease --json --no-fetch --lease-holder "$id") \
     || fail 'isolated real provider acquire failed'
   first_path=$(printf '%s\n' "$first" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])') \
     || fail 'provider did not return a JSON lease path'
@@ -718,8 +751,7 @@ test_installed_treehouse_lease_and_canonical_claim() {
   before=$(cksum "$claim/owner")
   # No worker process is left in the clean, landed slot. Its durable lease, not process
   # liveness or our Git-admin claim, must keep a stopped task out of allocation.
-  second=$(cd "$canonical" && HOME="$CASE_DIR/provider-home" \
-    "$provider" --root "$CASE_DIR/provider-root" get --lease --json --no-fetch --lease-holder next-task) \
+  second=$(fixture_treehouse "$provider" "$canonical" "$CASE_DIR" get --lease --json --no-fetch --lease-holder next-task) \
     || fail 'isolated next-task acquire failed'
   second_path=$(printf '%s\n' "$second" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])') \
     || fail 'provider did not return the second JSON lease path'
@@ -728,8 +760,7 @@ test_installed_treehouse_lease_and_canonical_claim() {
   [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$clean_head" ] || fail 'provider moved a clean kept-original slot'
   assert_grep 'must survive a newly spawned branch' "$POOL_DIR/advanced-main.txt" 'provider changed kept-original bytes'
   commit_sentinel
-  third=$(cd "$canonical" && HOME="$CASE_DIR/provider-home" \
-    "$provider" --root "$CASE_DIR/provider-root" get --lease --json --no-fetch --lease-holder third-task) \
+  third=$(fixture_treehouse "$provider" "$canonical" "$CASE_DIR" get --lease --json --no-fetch --lease-holder third-task) \
     || fail 'isolated third-task acquire failed'
   third_path=$(printf '%s\n' "$third" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])') \
     || fail 'provider did not return the third JSON lease path'
@@ -743,6 +774,7 @@ test_installed_treehouse_lease_and_canonical_claim() {
 }
 
 test_installed_treehouse_lease_and_canonical_claim
+test_treehouse_not_returned_preserves_claim
 test_invalid_mapping_refuses_before_allocation
 test_explicit_canonical_mapping_publishes_and_releases
 test_canonical_mapping_rejects_wrong_store_and_missing_claim
