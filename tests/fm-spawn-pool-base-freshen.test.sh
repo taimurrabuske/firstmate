@@ -6,6 +6,9 @@
 # These tests drive the real spawn path with a fake terminal, then prove it
 # starts the worker from the fetched origin/main tip or stops when origin is
 # unreachable.
+# Opt in to a real installed-provider recheck with FM_TEST_REAL_TREEHOUSE=1.
+# That probe uses only test-owned repositories, HOME and explicit Treehouse root;
+# it never returns/resets a live slot or installs/patches the provider.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -678,6 +681,68 @@ test_invalid_mapping_refuses_before_allocation() {
   pass 'invalid or ambiguous explicit repository mappings refuse before allocation'
 }
 
+# Opt-in provider capability probe: only disposable repositories, a private
+# HOME (no operator hooks/config), and an explicit root beneath this fixture.
+# No shared pool is discovered, no lease record is edited, and no return/reset
+# is requested. Cleanup removes the entire test-owned world via tests/lib.sh.
+# The ordinary suite keeps using fake terminals/providers; this probe tests
+# the actual installed CLI, and prints its path/version for later rechecks.
+test_installed_treehouse_lease_and_canonical_claim() {
+  [ "${FM_TEST_REAL_TREEHOUSE:-0}" = 1 ] || return 0
+  local id=pool-real-provider provider version provider_bytes canonical first second third first_path second_path third_path out before claim clean_head
+  provider=$(command -v treehouse) || fail 'real provider probe requires installed treehouse'
+  version=$("$provider" --version) || fail 'cannot read installed treehouse version'
+  provider_bytes=$(cksum "$provider") || fail 'cannot identify installed provider bytes'
+  printf '# installed provider: %s %s\n' "$provider" "$version"
+  read_case_record "$(make_case "$id" "$id")"
+  canonical=$PROJECT_DIR
+  PROJECT_DIR="$CASE_DIR/registered clone"
+  git clone --quiet "file://$CASE_DIR/origin.git" "$PROJECT_DIR"
+  git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$canonical"
+  git -C "$canonical" fetch --quiet origin
+  mkdir -p "$CASE_DIR/provider-home" "$CASE_DIR/provider-root"
+  first=$(cd "$canonical" && HOME="$CASE_DIR/provider-home" \
+    "$provider" --root "$CASE_DIR/provider-root" get --lease --json --no-fetch --lease-holder "$id") \
+    || fail 'isolated real provider acquire failed'
+  first_path=$(printf '%s\n' "$first" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])') \
+    || fail 'provider did not return a JSON lease path'
+  case "$first_path" in "$CASE_DIR/provider-root/"*) ;; *) fail 'provider escaped explicit fixture root' ;; esac
+  POOL_DIR=$first_path
+  # Real Git identity plus the existing acquired-shell stub proves publication
+  # against a slot actually allocated from the explicitly mapped repository.
+  out=$(run_spawn "$id" --mode direct-PR --yolo off)
+  expect_code 0 "$?" "real-provider canonical slot did not publish/start: $out"
+  claim="$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim"
+  [ -f "$claim/owner" ] || fail 'real-provider canonical slot claim was skipped'
+  clean_head=$(git -C "$POOL_DIR" rev-parse HEAD)
+  before=$(cksum "$claim/owner")
+  # No worker process is left in the clean, landed slot. Its durable lease, not process
+  # liveness or our Git-admin claim, must keep a stopped task out of allocation.
+  second=$(cd "$canonical" && HOME="$CASE_DIR/provider-home" \
+    "$provider" --root "$CASE_DIR/provider-root" get --lease --json --no-fetch --lease-holder next-task) \
+    || fail 'isolated next-task acquire failed'
+  second_path=$(printf '%s\n' "$second" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])') \
+    || fail 'provider did not return the second JSON lease path'
+  case "$second_path" in "$CASE_DIR/provider-root/"*) ;; *) fail 'second allocation escaped fixture root' ;; esac
+  [ "$first_path" != "$second_path" ] || fail 'provider reused a durably leased stopped slot'
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$clean_head" ] || fail 'provider moved a clean kept-original slot'
+  assert_grep 'must survive a newly spawned branch' "$POOL_DIR/advanced-main.txt" 'provider changed kept-original bytes'
+  commit_sentinel
+  third=$(cd "$canonical" && HOME="$CASE_DIR/provider-home" \
+    "$provider" --root "$CASE_DIR/provider-root" get --lease --json --no-fetch --lease-holder third-task) \
+    || fail 'isolated third-task acquire failed'
+  third_path=$(printf '%s\n' "$third" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])') \
+    || fail 'provider did not return the third JSON lease path'
+  case "$third_path" in "$CASE_DIR/provider-root/"*) ;; *) fail 'third allocation escaped fixture root' ;; esac
+  [ "$third_path" != "$first_path" ] && [ "$third_path" != "$second_path" ] || fail 'provider reused a stopped leased slot'
+  assert_sentinel
+  [ "$(cksum "$claim/owner")" = "$before" ] || fail 'next allocation changed the retained task claim'
+  [ "$("$provider" --version)" = "$version" ] && [ "$(cksum "$provider")" = "$provider_bytes" ] \
+    || fail 'installed provider changed during probe; rerun after the external update completes'
+  pass 'installed provider explicit-root durable lease retains stopped work and canonical claim publication succeeds'
+}
+
+test_installed_treehouse_lease_and_canonical_claim
 test_invalid_mapping_refuses_before_allocation
 test_explicit_canonical_mapping_publishes_and_releases
 test_canonical_mapping_rejects_wrong_store_and_missing_claim
