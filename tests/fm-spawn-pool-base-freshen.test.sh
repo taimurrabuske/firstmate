@@ -12,6 +12,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-spawn-pool-base-freshen)
+TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 
 make_case() {
   local name=$1 id=$2 default=${3:-main} case_dir home project origin pool publisher fakebin initial
@@ -59,6 +60,19 @@ run_spawn() {
     "$id" "$PROJECT_DIR" "$@"
 }
 
+run_teardown() {
+  local id=$1
+  shift
+  # No real process inventory or shared no-mistakes daemon is visible to cleanup.
+  fm_fake_exit0 "$FAKEBIN_DIR" ps lsof no-mistakes gh gh-axi
+  mkdir -p "$CASE_DIR/userhome"
+  HOME="$CASE_DIR/userhome" FM_HOME="$HOME_DIR" FM_ROOT_OVERRIDE='' \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" \
+    FM_TEARDOWN_GUARD_DONE=1 PATH="$FAKEBIN_DIR:$PATH" \
+    "$ROOT/bin/fm-teardown.sh" "$id" "$@" 2>&1
+}
+
 test_stale_pool_base_refreshes_before_branching() {
   local rec id out status current branch_head
   id='pool-current-base-r1'
@@ -79,6 +93,8 @@ test_stale_pool_base_refreshes_before_branching() {
       "$branch_head" "$current" "$(cat "$POOL_DIR/advanced-main.txt")"
   fi
 
+  out=$(run_teardown "$id")
+  expect_code 0 "$?" "clean claimed task teardown failed: $out"
   id='pool-current-base-repeat-r1'
   mkdir -p "$HOME_DIR/data/$id"
   printf 'brief for %s\n' "$id" > "$HOME_DIR/data/$id/brief.md"
@@ -270,7 +286,7 @@ strand_submodule_pin_via_spawn() {  # <seed-id>
   local id=$1 out status
   mkdir -p "$HOME_DIR/data/$id"
   printf 'brief for %s\n' "$id" > "$HOME_DIR/data/$id/brief.md"
-  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  out=$(run_spawn "$id" --scout)
   status=$?
   expect_code 0 "$status" "the spawn that moves the submodule pin should succeed"
   assert_contains "$out" "spawned $id" "the spawn that moves the submodule pin did not report success"
@@ -278,6 +294,10 @@ strand_submodule_pin_via_spawn() {  # <seed-id>
     || fail "the first spawn did not move the pooled base across the moved submodule pin"
   [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN1" ] \
     || fail "the first spawn did not strand the submodule on the pin the old base recorded"
+  printf 'seed scout complete\n' > "$HOME_DIR/data/$id/report.md"
+  printf 'decisions_reviewed=1\ndecision_keys=\n' >> "$HOME_DIR/state/$id.meta"
+  out=$(run_teardown "$id")
+  expect_code 0 "$?" "seed scout cleanup failed: $out"
 }
 
 test_stale_submodule_pin_explains_itself() {
@@ -425,6 +445,149 @@ test_stale_pin_beside_other_dirt_reports_one_verdict() {
   pass "a stale pin beside other dirt yields the conservative refusal alone, with no stale-pin line"
 }
 
+# Log the destructive refresh boundary, not implementation-source text.
+record_git_calls() {
+  local real_git
+  real_git=$(command -v git)
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %q\nexec %q "$@"\n' \
+    "$CASE_DIR/git-calls" "$real_git" > "$FAKEBIN_DIR/git"
+  chmod +x "$FAKEBIN_DIR/git"
+}
+
+assert_no_refresh_or_launch() {
+  if [ -f "$CASE_DIR/git-calls" ]; then
+    assert_not_contains "$(cat "$CASE_DIR/git-calls")" ' fetch ' 'refusal fetched before proving custody'
+    assert_not_contains "$(cat "$CASE_DIR/git-calls")" ' reset ' 'refusal reset before proving custody'
+  fi
+  assert_not_contains "$(cat "$CASE_DIR/launch.log" 2>/dev/null)" 'codex' 'refusal launched a worker'
+}
+
+commit_sentinel() {
+  printf 'unique unlanded sentinel\n' > "$POOL_DIR/sentinel.txt"
+  git -C "$POOL_DIR" add sentinel.txt
+  git -C "$POOL_DIR" -c user.name=Tests -c user.email=tests@example.invalid commit -qm sentinel
+  SENTINEL_HEAD=$(git -C "$POOL_DIR" rev-parse HEAD)
+}
+
+assert_sentinel() {
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$SENTINEL_HEAD" ] || fail 'refusal changed sentinel HEAD'
+  [ "$(cat "$POOL_DIR/sentinel.txt")" = 'unique unlanded sentinel' ] || fail 'refusal changed sentinel bytes'
+  [ -z "$(git -C "$POOL_DIR" status --porcelain)" ] || fail 'refusal changed sentinel working tree'
+}
+
+test_separately_seeded_same_origin_refuses() {
+  local id=pool-foreign-store out old_pool
+  read_case_record "$(make_case foreign-store "$id")"
+  old_pool=$POOL_DIR
+  git clone --quiet "file://$CASE_DIR/origin.git" "$CASE_DIR/separate"
+  POOL_DIR="$CASE_DIR/separate-slot"
+  git -C "$CASE_DIR/separate" worktree add --quiet --detach "$POOL_DIR" HEAD
+  [ "$(git -C "$POOL_DIR" remote get-url origin)" = "$(git -C "$PROJECT_DIR" remote get-url origin)" ] \
+    || fail 'fixture origins do not match'
+  commit_sentinel
+  record_git_calls
+  if out=$(FM_FAKE_LAUNCH_LOG="$CASE_DIR/launch.log" run_spawn "$id" --mode direct-PR --yolo off); then
+    fail 'spawn adopted a separately seeded same-origin slot'
+  fi
+  assert_contains "$out" 'slot custody identity mismatch' 'missing identity diagnostic'
+  assert_contains "$out" "$PROJECT_DIR/.git" 'missing expected common directory'
+  assert_contains "$out" "$CASE_DIR/separate/.git" 'missing actual common directory'
+  assert_contains "$out" "$POOL_DIR" 'missing refused slot path'
+  assert_no_refresh_or_launch
+  assert_sentinel
+  [ "$(git -C "$old_pool" rev-parse HEAD)" = "$INITIAL_SHA" ] || fail 'refusal changed another slot'
+  pass 'separately seeded same-origin slot refuses before refresh, preserving clean unlanded sentinel'
+}
+
+test_missing_and_incorrect_claim_refuse() {
+  local variant id out claim before
+  for variant in missing incorrect; do
+    id="pool-claim-$variant"
+    read_case_record "$(make_case "$id" "$id")"
+    commit_sentinel
+    claim="$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim"
+    if [ "$variant" = incorrect ]; then
+      (cd "$POOL_DIR" && bash "$ROOT/bin/fm-slot-custody.sh" claim "$PROJECT_DIR" "$HOME_DIR/state" other-task other-token) \
+        || fail 'could not publish foreign fixture claim'
+      before=$(cksum "$claim/owner")
+    fi
+    record_git_calls
+    if out=$(FM_FAKE_SKIP_CLAIM=1 FM_FAKE_LAUNCH_LOG="$CASE_DIR/launch.log" run_spawn "$id" --mode direct-PR --yolo off); then
+      fail "$variant claim allowed freshen/launch"
+    fi
+    assert_contains "$out" 'cannot prove task' 'missing claim refusal'
+    assert_contains "$out" "$claim" 'missing exact claim path'
+    assert_no_refresh_or_launch
+    assert_sentinel
+    if [ "$variant" = incorrect ]; then
+      [ "$(cksum "$claim/owner")" = "$before" ] || fail 'foreign claim was changed'
+      # Publication itself cannot overwrite an already-owned slot either.
+      if (cd "$POOL_DIR" && bash "$ROOT/bin/fm-slot-custody.sh" claim "$PROJECT_DIR" "$HOME_DIR/state" "$id" replacement) >/dev/null 2>&1; then
+        fail 'publisher adopted a foreign claim'
+      fi
+      [ "$(cksum "$claim/owner")" = "$before" ] || fail 'publisher rewrote foreign claim'
+    else
+      [ ! -e "$claim" ] || fail 'supervisor manufactured custody from a pane-path observation'
+    fi
+  done
+  pass 'missing and foreign claims refuse before any refresh/launch and preserve unlanded bytes'
+}
+
+test_stale_same_store_path_cannot_claim_another_slot() {
+  local id=pool-stale-same-store out actual
+  read_case_record "$(make_case "$id" "$id")"
+  commit_sentinel
+  actual="$CASE_DIR/actual-acquired"
+  git -C "$PROJECT_DIR" worktree add --quiet --detach "$actual" "$INITIAL_SHA"
+  record_git_calls
+  if out=$(FM_FAKE_ACQUIRED_PATH="$actual" FM_FAKE_LAUNCH_LOG="$CASE_DIR/launch.log" run_spawn "$id" --mode direct-PR --yolo off); then
+    fail 'stale same-store observation acquired custody'
+  fi
+  assert_no_refresh_or_launch
+  assert_sentinel
+  [ ! -e "$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim" ] \
+    || fail 'observed slot was claimed instead of actual acquired shell'
+  pass 'same-store stale observation cannot manufacture a claim for an unowned slot'
+}
+
+test_teardown_requires_exact_custody() {
+  local id=pool-teardown-custody out meta claim token before
+  read_case_record "$(make_case "$id" "$id")"
+  out=$(run_spawn "$id" --mode direct-PR --yolo off)
+  expect_code 0 "$?" "valid claimed spawn failed: $out"
+  meta="$HOME_DIR/state/$id.meta"
+  claim="$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim"
+  token=$(grep '^treehouse_claim=' "$meta" | cut -d= -f2-)
+  [ -n "$token" ] && [ -f "$claim/owner" ] || fail 'spawn omitted durable custody'
+  before=$(cksum "$claim/owner")
+  cp "$claim/owner" "$CASE_DIR/owner.saved"
+  # Wrong generation must refuse before branch, hook, endpoint or return cleanup.
+  printf '\nforeign\n' >> "$claim/owner"
+  git -C "$POOL_DIR" checkout --quiet -b "fm/$id"
+  printf '#!/usr/bin/env bash\necho returned >> %q\n' "$CASE_DIR/returned" > "$FAKEBIN_DIR/treehouse"
+  if out=$(run_teardown "$id" --force); then fail 'force teardown accepted incorrect custody'; fi
+  assert_contains "$out" 'cannot prove task' 'teardown omitted custody refusal'
+  [ ! -e "$CASE_DIR/returned" ] || fail 'teardown returned an incorrectly owned slot'
+  [ "$(git -C "$POOL_DIR" branch --show-current)" = "fm/$id" ] || fail 'refusal detached branch'
+  [ -f "$meta" ] || fail 'refusal removed task record'
+  # Restore only this fixture's originally published owner record.
+  cp "$CASE_DIR/owner.saved" "$claim/owner"
+  [ "$(cksum "$claim/owner")" = "$before" ] || fail 'fixture did not restore exact claim'
+  mv "$claim" "$claim.saved"
+  if out=$(run_teardown "$id"); then fail 'teardown accepted missing custody'; fi
+  [ ! -e "$CASE_DIR/returned" ] || fail 'missing claim reached return'
+  mv "$claim.saved" "$claim"
+  out=$(run_teardown "$id")
+  expect_code 0 "$?" "valid custody teardown failed: $out"
+  [ -f "$CASE_DIR/returned" ] || fail 'valid custody did not reach guarded return'
+  [ ! -e "$claim" ] && [ ! -e "$meta" ] || fail 'successful teardown retained ownership'
+  pass 'guarded teardown refuses wrong/missing custody and releases the exact successful claim'
+}
+
+test_separately_seeded_same_origin_refuses
+test_missing_and_incorrect_claim_refuse
+test_stale_same_store_path_cannot_claim_another_slot
+test_teardown_requires_exact_custody
 test_stale_pool_base_refreshes_before_branching
 test_non_main_default_branch_refreshes_before_branching
 test_direct_pr_and_scout_refresh_before_launch

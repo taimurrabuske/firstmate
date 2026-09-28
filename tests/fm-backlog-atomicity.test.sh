@@ -23,8 +23,8 @@
 # deliberately not asserted here.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
@@ -56,13 +56,9 @@ make_home() {  # <name> [task-id...]
     printf 'Delivery contract: mode=no-mistakes\nbrief for %s\n' "$id" > "$home/data/$id/brief.md"
   done
 
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-case "$*" in *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;; esac
-case "${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
+  fm_test_fake_tmux_spawn "$fakebin"
+  mkdir -p "$fakebin/custody"
+  fm_test_fake_tmux_spawn "$fakebin/custody"
   fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes
 
   fm_git_init_commit "$case_dir/project"
@@ -237,6 +233,7 @@ case "\$*" in
 esac
 case "\${1:-}" in
   display-message) printf 'firstmate\\n'; exit 0 ;;
+  send-keys) FM_FAKE_LAUNCH_LOG= "$case_dir/fakebin/custody/tmux" "\$@" ;;
   capture-pane)
     if [ ! -f "$case_dir/kimi-interrupted" ]; then
       : > "$case_dir/kimi-interrupted"

@@ -2,8 +2,8 @@
 # Behavior tests for the verified Kimi Code CLI crewmate adapter.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 # bin/fm-harness.sh checks verified ENV markers before ancestry. A suite run
 # from inside Cursor, Claude, Pi, or Grok inherits those markers, which outrank
@@ -30,6 +30,8 @@ trap cleanup_kimi_harness EXIT
 make_spawn_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
+  mkdir -p "$fakebin/custody"
+  fm_test_fake_tmux_spawn "$fakebin/custody"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -67,6 +69,7 @@ case "${1:-}" in
   list-windows) exit 0 ;;
   has-session|new-session|new-window|kill-window) exit 0 ;;
   send-keys)
+    FM_FAKE_LAUNCH_LOG= "$(dirname "$0")/custody/tmux" "$@" || exit $?
     prev=
     literal=
     for arg in "$@"; do

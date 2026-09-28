@@ -10,8 +10,8 @@
 # fixture without it would let a naive implementation pass.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 # bin/fm-harness.sh checks verified ENV markers before ancestry. Muse is
 # markerless, so an inherited Cursor/Claude/Pi/Grok marker would outrank the
@@ -69,6 +69,8 @@ write_session_log() {
 make_spawn_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
+  mkdir -p "$fakebin/custody"
+  fm_test_fake_tmux_spawn "$fakebin/custody"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -85,6 +87,7 @@ case "${1:-}" in
   list-windows) exit 0 ;;
   has-session|new-session|new-window|kill-window) exit 0 ;;
   send-keys)
+    FM_FAKE_LAUNCH_LOG= "$(dirname "$0")/custody/tmux" "$@" || exit $?
     prev=
     for arg in "$@"; do
       if [ "$prev" = -l ]; then

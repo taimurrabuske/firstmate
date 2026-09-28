@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Tasks carrying treehouse_claim must prove their exact slot custody before
+# cleanup, even with --force; fm-slot-custody-lib.sh owns the proof and release.
+# Legacy records without a claim retain their existing cleanup contract, but
+# cannot clean a slot that now carries a claim from any task.
 # Tear down a finished task: return the treehouse worktree, release the Orca
 # worktree, or retire a secondmate home; kill the recorded runtime endpoint,
 # clear volatile state, and CLOSE this home's backlog item for ship and scout
@@ -725,6 +729,14 @@ BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET
 WT=$(fm_meta_get "$META" worktree)
 PROJ=$(fm_meta_get "$META" project)
+# shellcheck source=bin/fm-slot-custody-lib.sh
+. "$SCRIPT_DIR/fm-slot-custody-lib.sh"
+SLOT_TOKEN=$(fm_meta_get "$META" treehouse_claim)
+check_treehouse_slot_custody() {
+  [ "$BACKEND" != orca ] && [ "$TEARDOWN_META_KIND" != secondmate ] || return 0
+  fm_slot_check_record "$PROJ" "$WT" "$STATE" "$ID" "$SLOT_TOKEN"
+}
+check_treehouse_slot_custody || exit 1
 T_ORCA=
 [ "$BACKEND" != orca ] || T_ORCA=$T
 if [ "${FM_TEARDOWN_GUARD_DONE:-0}" != 1 ]; then
@@ -2451,7 +2463,7 @@ preflight_firstmate_home_herdr_children() {  # <home>
 }
 
 cleanup_firstmate_home_children() {
-  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_busy_gen
+  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_slot_token
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
@@ -2462,6 +2474,10 @@ cleanup_firstmate_home_children() {
     child_kind=$(meta_value "$child_meta" kind)
     [ -n "$child_kind" ] || child_kind=ship
     child_backend=$(fm_backend_of_meta "$child_meta")
+    child_slot_token=$(meta_value "$child_meta" treehouse_claim)
+    if [ "$child_backend" != orca ] && [ "$child_kind" != secondmate ]; then
+      fm_slot_check_record "$child_proj" "$child_wt" "$sub_state" "$child_id" "$child_slot_token" || return 1
+    fi
     if [ "$child_backend" = orca ]; then
       child_t=$(meta_value "$child_meta" terminal)
     else
@@ -2517,12 +2533,13 @@ cleanup_firstmate_home_children() {
           :
         else
           child_return_rc=$?
-          if [ "$child_return_rc" -eq "$TEARDOWN_TREEHOUSE_LOCK_REFUSED" ]; then
+          if [ -n "$child_slot_token" ] || [ "$child_return_rc" -eq "$TEARDOWN_TREEHOUSE_LOCK_REFUSED" ]; then
             return "$child_return_rc"
           fi
           safe_rm_rf_child_worktree "$child_wt" "$child_proj"
         fi
       else
+        [ -z "$child_slot_token" ] || return 1
         safe_rm_rf_child_worktree "$child_wt" "$child_proj"
       fi
     fi
@@ -2536,6 +2553,9 @@ cleanup_firstmate_home_children() {
     retire_busy_state "$sub_state" "$child_id" "$child_busy_gen" || return 1
     status_retire_presentation_task "$sub_state" "$child_id" || return 1
     fm_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
+    if [ -n "$child_slot_token" ] && [ "$child_backend" != orca ] && [ "$child_kind" != secondmate ]; then
+      fm_slot_release "$child_proj" "$child_wt" "$sub_state" "$child_id" "$child_slot_token" || return 1
+    fi
     rm -f "$sub_state/$child_id.turn-ended" \
       "$sub_state/$child_id.pi-ext.ts" \
       "$sub_state/$child_id.grok-turnend-token" "$sub_state/$child_id.kimi-turnend-token" \
@@ -2713,6 +2733,9 @@ else
     BACKLOG_SKIP_REASON=$TEARDOWN_BACKLOG_SKIP_REASON
   fi
 fi
+
+# Recheck custody immediately before the destructive half, after slow checks.
+check_treehouse_slot_custody || exit 1
 
 # Every landed/discard-work refusal above has now passed (or --force skipped
 # them). Fix 1 and Fix 2 (see script header) run here, unconditionally on
@@ -2907,6 +2930,12 @@ else
     echo "error: $ID's endpoint and local copy are cleaned up, but its task record could not be removed ($FM_BACKLOG_TRANSITION_ERROR)" >&2
     exit 1
   fi
+fi
+if [ -n "$SLOT_TOKEN" ] && [ "$BACKEND" != orca ] && [ "$KIND" != secondmate ]; then
+  fm_slot_release "$PROJ" "$WT" "$STATE" "$ID" "$SLOT_TOKEN" || {
+    echo "error: cleanup finished but exact custody claim for '$WT' could not be released; explicit recovery is required" >&2
+    exit 1
+  }
 fi
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0

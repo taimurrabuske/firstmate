@@ -4,8 +4,8 @@
 # See docs/verification/trace-context.md for the maintained coverage inventory.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-trace-context-lib.sh"
 
@@ -17,12 +17,14 @@ TMP_ROOT=$(fm_test_tmproot fm-trace-context-spawn)
 # one per line, in send order, so ordering is observable.
 make_spawn_fakebin() {
   local dir=$1 fakebin
-  fakebin=$(fm_fakebin "$dir")
+  fakebin=$(fm_test_make_spawn_fakebin "$dir")
+  mv "$fakebin/tmux" "$fakebin/tmux-base"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
 case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+  *"#{pane_current_command}"*) printf 'bash\n'; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
@@ -32,6 +34,7 @@ case "${1:-}" in
     ;;
   has-session|new-session|new-window|kill-window) exit 0 ;;
   send-keys)
+    FM_FAKE_LAUNCH_LOG= "$(dirname "$0")/tmux-base" "$@" || exit $?
     if [ "${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" = 1 ]; then
       for a in "$@"; do
         case "$a" in
@@ -106,8 +109,10 @@ make_spawn_case() {
 # is decided ONLY by the home's config/trace-context, whether the runner's own
 # environment enables or disables trace context.
 run_spawn() {
-  local home=$1 wt=$2 fakebin=$3 launchlog=$4
+  local home=$1 wt=$2 fakebin=$3 launchlog=$4 window=
+  local -a delivery=(--mode no-mistakes --yolo off)
   shift 4
+  if [ "${2:-}" = --relaunch ]; then delivery=(); window="fm-$1"; fi
   : > "$launchlog"
   env -u FM_TRACE_CONTEXT \
     FM_ROOT_OVERRIDE='' FM_HOME="$home" \
@@ -117,9 +122,9 @@ run_spawn() {
     FM_FAKE_TRACEPARENT_SEND_FAIL="${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" \
     FM_FAKE_TRACEPARENT_SEND_UNSAFE="${FM_FAKE_TRACEPARENT_SEND_UNSAFE:-0}" \
     FM_FAKE_TRACE_METADATA_APPEND_FAIL="${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" \
-    FM_FAKE_META_PATH="$home/state/$1.meta" \
+    FM_FAKE_META_PATH="$home/state/$1.meta" FM_FAKE_DUPLICATE_WINDOW="$window" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
-    "$SPAWN" "$@" --mode no-mistakes --yolo off 2>&1
+    "$SPAWN" "$@" "${delivery[@]}" 2>&1
 }
 
 # Same, but with an explicit FM_TRACE_CONTEXT override, to prove the env decides.
@@ -397,10 +402,8 @@ test_relaunch_reuses_recorded_carrier() {
   first=$(meta_traceparent "$meta")
   fm_trace_context_valid "$first" || fail "first spawn must record a valid carrier (got '$first')"
 
-  # Relaunch the same task: the recorded carrier must be reused verbatim for both
-  # the meta and the injected export, so an observer keeps one identity across
-  # restarts.
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
+  # Relaunch the same task through the recorded-copy path, not a fresh get.
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" --relaunch)
   status=$?
   expect_code 0 "$status" "relaunch spawn should succeed"
   assert_contains "$out" "spawned $CASE_ID" "relaunch spawn should report success"
@@ -534,7 +537,7 @@ test_two_routed_tasks_through_one_secondmate_root_distinct_traces() {
 
   # Same environment, same task: a relaunch must reuse task A's recorded
   # carrier verbatim, so the per-task boundary never costs recovery identity.
-  out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_a" "$fakebin" "$log_a" "$id_a" "$proj_a")
+  out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_a" "$fakebin" "$log_a" "$id_a" --relaunch)
   status=$?
   expect_code 0 "$status" "routed task A relaunch should succeed"
   relaunch_tp=$(meta_traceparent "$sm/state/$id_a.meta")
