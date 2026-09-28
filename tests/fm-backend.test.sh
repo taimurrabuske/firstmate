@@ -29,8 +29,8 @@
 # kill) lives in tests/fm-backend-tmux-smoke.test.sh.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 fm_git_identity fmtest fmtest@example.invalid
 
 # shellcheck source=/dev/null
@@ -771,7 +771,8 @@ test_peek_conformance_old_vs_new() {
 
 make_spawn_fakebin() {  # <dir> <fake-worktree-path> -> echoes fakebin dir
   local dir=$1 wt=$2 fb="$1/fakebin"
-  mkdir -p "$fb"
+  mkdir -p "$fb/custody"
+  fm_test_fake_tmux_spawn "$fb/custody"
   cat > "$fb/tmux" <<SH
 #!/usr/bin/env bash
 set -u
@@ -780,6 +781,7 @@ case "\${1:-}" in
   display-message)
     for a in "\$@"; do case "\$a" in *pane_current_path*) printf '%s\\n' "$wt"; exit 0 ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
+  send-keys) FM_FAKE_PANE_PATH="$wt" FM_FAKE_LAUNCH_LOG= "$fb/custody/tmux" "\$@" ;;
   list-windows) exit 0 ;;
 esac
 exit 0
@@ -832,7 +834,8 @@ run_spawn_case() {  # <bin-root> <fakebin> <log> <state> <data> <config> <proj> 
 # canonicalization in bin/fm-spawn.sh ever regresses.
 make_spawn_symlink_fakebin() {  # <dir> <initial-project-path> <worktree-path> -> echoes fakebin dir
   local dir=$1 initial_path=$2 wt=$3 fb="$1/fakebin" counter="$1/poll-count"
-  mkdir -p "$fb"
+  mkdir -p "$fb/custody"
+  fm_test_fake_tmux_spawn "$fb/custody"
   : > "$counter"
   cat > "$fb/tmux" <<SH
 #!/usr/bin/env bash
@@ -850,6 +853,7 @@ case "\${1:-}" in
       exit 0
     ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
+  send-keys) FM_FAKE_PANE_PATH="$wt" FM_FAKE_LAUNCH_LOG= "$fb/custody/tmux" "\$@" ;;
   list-windows) exit 0 ;;
 esac
 exit 0

@@ -208,6 +208,9 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
   assert_contains "$launch" "< '$home_real/data/$relative_id/brief.md'" \
     "relative FM_HOME leaked into the default cross-process brief path"
 
+  # The previous task still owns its slot; this spawn gets a distinct one.
+  WT_DIR="$CASE_DIR/absolute-wt"
+  git -C "$PROJ_DIR" worktree add --quiet --detach "$WT_DIR" HEAD
   linked_home="$CASE_DIR/home-link"
   ln -s "$HOME_DIR" "$linked_home"
   : > "$LAUNCH_LOG"
@@ -714,7 +717,9 @@ test_batch_forwards_shared_profile_flags() {
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+  git -C "$PROJ_DIR" worktree add --quiet --detach "$CASE_DIR/second-wt" HEAD
+  printf '%s\n%s\n' "$WT_DIR" "$CASE_DIR/second-wt" > "$CASE_DIR/allocations"
+  out=$(FM_FAKE_PANE_SEQUENCE="$CASE_DIR/allocations" run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
   status=$?
   expect_code 0 "$status" "batch spawn with shared profile flags should succeed"
