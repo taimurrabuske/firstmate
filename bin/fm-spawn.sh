@@ -134,10 +134,6 @@
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
 #   git worktree root distinct from the primary project checkout.
-#   Fresh Treehouse workers must publish task custody from the acquired shell
-#   and prove the exact claim before freshen or launch (fm-slot-custody-lib.sh).
-#   Unknown/mismatched Git pool identities and missing/foreign claims refuse
-#   without changing the slot; an aborted spawn retains its claim for recovery.
 #   Before a fresh ship or scout worker starts, its clean task worktree fetches
 #   origin, resolves the current remote default branch, and resets to its tip.
 #   An unreachable origin, unresolved default branch, or non-clean worktree
@@ -1896,10 +1892,6 @@ EOF
   printf '%s' "$lines" >&2
 }
 
-# shellcheck source=bin/fm-slot-custody-lib.sh
-. "$SCRIPT_DIR/fm-slot-custody-lib.sh"
-SLOT_TOKEN=
-
 freshen_spawn_worktree_base() {  # <worktree>
   local worktree=$1 default target expected actual status
   if ! git -C "$worktree" fetch --quiet origin; then
@@ -2476,22 +2468,8 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
-  # Prove pool identity before asking the acquired shell to publish anything.
-  # A stable cwd read is not custody: only that shell can claim its actual cwd.
-  fm_slot_identity "$PROJ_ABS" "$WT" || {
-    fm_slot_refuse "$PROJ_ABS" "$WT" "$ID"; exit 1
-  }
-  SLOT_TOKEN="c$(date +%s).${BASHPID:-$$}.$RANDOM"
-  spawn_send_text_line "$WT_TARGET" "bash $(shell_quote "$SCRIPT_DIR/fm-slot-custody.sh") claim $(shell_quote "$PROJ_ABS") $(shell_quote "$STATE") $(shell_quote "$ID") $(shell_quote "$SLOT_TOKEN")"
-  for _ in $(seq 1 50); do
-    fm_slot_check "$PROJ_ABS" "$WT" "$STATE" "$ID" "$SLOT_TOKEN" 2>/dev/null && break
-    sleep 0.1
-  done
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
-  if [ "$BACKEND" != orca ]; then
-    fm_slot_check "$PROJ_ABS" "$WT" "$STATE" "$ID" "$SLOT_TOKEN" || exit 1
-  fi
   freshen_spawn_worktree_base "$WT" || exit 1
 fi
 
@@ -2888,7 +2866,6 @@ preserve_relaunch_meta() {
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
-  [ -z "$SLOT_TOKEN" ] || echo "treehouse_claim=$SLOT_TOKEN"
   # Default-off writes no traceparent= line.
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
@@ -3079,9 +3056,6 @@ if [ -n "$SPAWN_TRACEPARENT" ]; then
   fi
 fi
 sleep 0.3
-if [ -n "$SLOT_TOKEN" ]; then
-  fm_slot_check "$PROJ_ABS" "$WT" "$STATE" "$ID" "$SLOT_TOKEN" || exit 1
-fi
 spawn_send_literal "$T" "$LAUNCH"
 sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
