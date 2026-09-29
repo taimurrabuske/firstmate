@@ -737,10 +737,6 @@ check_treehouse_slot_custody() {
   fm_slot_check_record "$PROJ" "$WT" "$STATE" "$ID" "$SLOT_TOKEN"
 }
 check_treehouse_slot_custody || exit 1
-SLOT_RETURN_PROJECT=$PROJ
-if [ -n "$SLOT_TOKEN" ] && [ "$BACKEND" != orca ] && [ "$TEARDOWN_META_KIND" != secondmate ]; then
-  SLOT_RETURN_PROJECT=$(fm_slot_repository "$PROJ") || exit 1
-fi
 T_ORCA=
 [ "$BACKEND" != orca ] || T_ORCA=$T
 if [ "${FM_TEARDOWN_GUARD_DONE:-0}" != 1 ]; then
@@ -2467,7 +2463,7 @@ preflight_firstmate_home_herdr_children() {  # <home>
 }
 
 cleanup_firstmate_home_children() {
-  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_slot_token child_return_project
+  local home=$1 sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_slot_token
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
@@ -2533,12 +2529,7 @@ cleanup_firstmate_home_children() {
         "$child_wt/.opencode/plugins/fm-busy-state.js" \
         "$child_wt/.fm-grok-turnend" "$child_wt/.fm-kimi-turnend"
       if [ -n "$child_proj" ] && [ -d "$child_proj" ] && command -v treehouse >/dev/null 2>&1; then
-        child_return_project=$child_proj
-        if [ -n "$child_slot_token" ]; then
-          fm_slot_check "$child_proj" "$child_wt" "$sub_state" "$child_id" "$child_slot_token" || return 1
-          child_return_project=$(fm_slot_repository "$child_proj") || return 1
-        fi
-        if teardown_treehouse_return "$child_wt" "$child_return_project" "child worktree"; then
+        if teardown_treehouse_return "$child_wt" "$child_proj" "child worktree"; then
           :
         else
           child_return_rc=$?
@@ -2799,8 +2790,7 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   if [ "$FORCE" != "--force" ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ]; then
     post_lock_cleanup_check=validate_worktree_teardown_safety
   fi
-  check_treehouse_slot_custody || exit 1
-  teardown_treehouse_return "$WT" "$SLOT_RETURN_PROJECT" "worktree" "$post_lock_cleanup_check" || {
+  teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" || {
     echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
     exit 1
   }

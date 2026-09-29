@@ -7,52 +7,18 @@
 #
 # Pool identity is the project's canonical Git common directory plus Git's
 # registered linked worktree, never an origin URL or a directory basename.
-# Separate same-origin clones never imply authority. A project's local Git config
-# firstmate.treehouseRepository may explicitly name an absolute canonical checkout
-# for allocation and return. Resolve it before get; verify its Git common directory
-# and linked registration again before claim, freshen, launch, and cleanup.
-# Mapped claims bind that resolved repository and common directory (v2); unmapped
-# v1 claims remain compatible. Changing the mapping cannot transfer a claim.
+# Separate same-origin clones are deliberately unsupported: no implicit adoption.
 # Claims live in the linked worktree's Git admin directory, outside checked-out
 # bytes and shared across Firstmate homes. Exclusive mkdir reserves publication;
 # incomplete, existing, symlinked, or foreign claims refuse, never get repaired.
 # The exact record binds project, worktree, state directory, task and generation.
 # No process liveness, stale-time heuristic, or --force can transfer ownership.
 
-fm_slot_repository() { # <project>; prints the explicitly selected allocation repository
-  local project=$1 mapped rc top
-  if mapped=$(git -C "$project" config --local --get-all firstmate.treehouseRepository 2>/dev/null); then
-    rc=0
-  else
-    rc=$?
-  fi
-  if [ "$rc" -eq 1 ]; then
-    mapped=$(cd "$project" 2>/dev/null && pwd -P) || return 1
-  elif [ "$rc" -ne 0 ] || [ -z "$mapped" ]; then
-    echo "error: cannot resolve firstmate.treehouseRepository for '$project'" >&2
-    return 1
-  fi
-  case "$mapped" in
-    /*) ;;
-    *) echo "error: firstmate.treehouseRepository must name an absolute checkout: '$mapped'" >&2; return 1 ;;
-  esac
-  case "$mapped" in *$'\n'*|*$'\r'*) echo 'error: ambiguous Treehouse repository mapping' >&2; return 1 ;; esac
-  if ! mapped=$(cd "$mapped" 2>/dev/null && pwd -P) \
-     || ! top=$(git -C "$mapped" rev-parse --show-toplevel 2>/dev/null) \
-     || ! top=$(cd "$top" 2>/dev/null && pwd -P) \
-     || [ "$mapped" != "$top" ]; then
-    echo "error: Treehouse repository mapping for '$project' does not resolve to a repository root" >&2
-    return 1
-  fi
-  printf '%s\n' "$mapped"
-}
-
 fm_slot_identity() { # <project> <worktree>
-  local project=$1 worktree=$2 project_common worktree_common top admin registered repository
-  repository=$(fm_slot_repository "$project") || return 1
+  local project=$1 worktree=$2 project_common worktree_common top admin registered
   FM_SLOT_PROJECT=$(cd "$project" 2>/dev/null && pwd -P) || return 1
   FM_SLOT_WORKTREE=$(cd "$worktree" 2>/dev/null && pwd -P) || return 1
-  project_common=$(git -C "$repository" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  project_common=$(git -C "$project" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
   project_common=$(cd "$project_common" 2>/dev/null && pwd -P) || return 1
   worktree_common=$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
   worktree_common=$(cd "$worktree_common" 2>/dev/null && pwd -P) || return 1
@@ -63,28 +29,22 @@ fm_slot_identity() { # <project> <worktree>
   fi
   top=$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null) || return 1
   top=$(cd "$top" 2>/dev/null && pwd -P) || return 1
-  [ "$top" = "$FM_SLOT_WORKTREE" ] && [ "$top" != "$FM_SLOT_PROJECT" ] && [ "$top" != "$repository" ] || return 1
-  registered=$(git -C "$repository" -c core.quotePath=false worktree list --porcelain) || return 1
+  [ "$top" = "$FM_SLOT_WORKTREE" ] && [ "$top" != "$FM_SLOT_PROJECT" ] || return 1
+  registered=$(git -C "$project" -c core.quotePath=false worktree list --porcelain) || return 1
   printf '%s\n' "$registered" | grep -Fx "worktree $FM_SLOT_WORKTREE" >/dev/null || return 1
   admin=$(git -C "$worktree" rev-parse --absolute-git-dir 2>/dev/null) || return 1
   admin=$(cd "$admin" 2>/dev/null && pwd -P) || return 1
   [ "$(dirname "$admin")" = "$project_common/worktrees" ] || return 1
   FM_SLOT_CLAIM="$admin/fm-slot-claim"
-  FM_SLOT_REPOSITORY=$repository
-  FM_SLOT_COMMON=$project_common
 }
 
 fm_slot_record() { # <state> <id> <token>
   local state
   state=$(cd "$1" 2>/dev/null && pwd -P) || return 1
   # Records are line-oriented. Ambiguous paths or identifiers cannot own a slot.
-  case "$state$2$3$FM_SLOT_PROJECT$FM_SLOT_WORKTREE$FM_SLOT_REPOSITORY$FM_SLOT_COMMON" in *$'\n'*|*$'\r'*) return 1 ;; esac
+  case "$state$2$3$FM_SLOT_PROJECT$FM_SLOT_WORKTREE" in *$'\n'*|*$'\r'*) return 1 ;; esac
   [ -n "$2" ] && [ -n "$3" ] || return 1
-  if [ "$FM_SLOT_PROJECT" = "$FM_SLOT_REPOSITORY" ]; then
-    printf 'v1\n%s\n%s\n%s\n%s\n%s\n' "$FM_SLOT_PROJECT" "$FM_SLOT_WORKTREE" "$state" "$2" "$3"
-  else
-    printf 'v2\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$FM_SLOT_PROJECT" "$FM_SLOT_WORKTREE" "$state" "$2" "$3" "$FM_SLOT_REPOSITORY" "$FM_SLOT_COMMON"
-  fi
+  printf 'v1\n%s\n%s\n%s\n%s\n%s\n' "$FM_SLOT_PROJECT" "$FM_SLOT_WORKTREE" "$state" "$2" "$3"
 }
 
 fm_slot_refuse() {

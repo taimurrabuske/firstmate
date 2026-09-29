@@ -244,15 +244,6 @@ The flag is per home and is not inherited by secondmate homes, because stow cade
 Only the file's presence is read, so its contents are ignored; remove it to return to the default contract on the next pass.
 The skill text owns the marker spelling, the tick order, and the reinforcement rule.
 
-## Treehouse repository mapping
-
-Ordinary workers use the registered project's Git store unless the operator explicitly selects a canonical allocation checkout with the project's local Git setting `firstmate.treehouseRepository`.
-This is useful when several separate clones share a Treehouse pool whose slots are linked to one canonical clone; a matching origin URL alone never authorizes that mapping.
-The setting names an absolute repository root and must remain stable until its claimed tasks are cleaned up.
-[`bin/fm-slot-custody-lib.sh`](../bin/fm-slot-custody-lib.sh) owns resolution, identity checks, claim formats, and release mechanics; [`tests/fm-spawn-pool-base-freshen.test.sh`](../tests/fm-spawn-pool-base-freshen.test.sh) exercises canonical-linked publication and preservation on refusal.
-This gate protects Firstmate's refresh and launch, not Treehouse's own earlier allocation/reset: unsafe pools still require independent quarantine before allocation.
-No mapping is inferred, propagated, or installed automatically, and this setting does not apply to Orca or secondmate provisioning.
-
 ## Secondmate routes (data/secondmates.md)
 
 Persistent secondmate routes live locally in `data/secondmates.md`.
