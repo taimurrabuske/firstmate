@@ -134,6 +134,9 @@ case "${1:-}" in
     # Keep its actual cwd independently overridable from the observed pane path.
     for a in "$@"; do
       case "$a" in
+        *'treehouse get')
+          [ -z "${FM_FAKE_ALLOCATION_LOG:-}" ] || printf '%s\n' "$a" >> "$FM_FAKE_ALLOCATION_LOG"
+          ;;
         bash\ *fm-slot-custody.sh*\ claim\ *)
           if [ "${FM_FAKE_SKIP_CLAIM:-0}" != 1 ]; then
             (cd "${FM_FAKE_ACQUIRED_PATH:-$FM_FAKE_PANE_PATH}" && eval "$a")

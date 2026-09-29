@@ -6,6 +6,10 @@
 # These tests drive the real spawn path with a fake terminal, then prove it
 # starts the worker from the fetched origin/main tip or stops when origin is
 # unreachable.
+# Opt in to a real provider recheck with FM_TEST_REAL_TREEHOUSE=1; optionally set
+# FM_TEST_TREEHOUSE_BIN to an absolute path to a staged, unmodified official binary.
+# That probe uses only test-owned repositories, HOME and explicit Treehouse root;
+# it never returns/resets a live slot or installs/patches the provider.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -181,6 +185,7 @@ test_dirty_pool_refuses_without_discarding_work() {
   read_case_record "$rec"
   before=$(git -C "$POOL_DIR" rev-parse HEAD)
   printf 'keep this local work\n' > "$POOL_DIR/uncommitted.txt"
+  git -C "$POOL_DIR" config status.showUntrackedFiles no
 
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
@@ -584,6 +589,196 @@ test_teardown_requires_exact_custody() {
   pass 'guarded teardown refuses wrong/missing custody and releases the exact successful claim'
 }
 
+test_explicit_canonical_mapping_publishes_and_releases() {
+  local id=pool-canonical-linked out canonical claim token returned
+  read_case_record "$(make_case canonical-linked "$id")"
+  canonical=$PROJECT_DIR
+  PROJECT_DIR="$CASE_DIR/registered clone"
+  git clone --quiet "file://$CASE_DIR/origin.git" "$PROJECT_DIR"
+  git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$canonical"
+  out=$(FM_FAKE_ALLOCATION_LOG="$CASE_DIR/allocation.log" run_spawn "$id" --mode direct-PR --yolo off)
+  expect_code 0 "$?" "explicit canonical-linked spawn failed: $out"
+  assert_contains "$(cat "$CASE_DIR/allocation.log")" "cd '$canonical' && treehouse get" \
+    'allocation did not enter the explicit canonical repository'
+  claim="$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim"
+  token=$(grep '^treehouse_claim=' "$HOME_DIR/state/$id.meta" | cut -d= -f2-)
+  [ -n "$token" ] && [ -f "$claim/owner" ] || fail 'canonical-linked claim was skipped'
+  assert_grep 'v2' "$claim/owner" 'mapped claim did not bind the allocation source'
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$(git -C "$POOL_DIR" rev-parse origin/main)" ] \
+    || fail 'claimed canonical-linked slot did not freshen'
+  returned="$CASE_DIR/returned-from"
+  printf '#!/usr/bin/env bash\npwd -P > %q\n' "$returned" > "$FAKEBIN_DIR/treehouse"
+  # A mapping change cannot transfer an already published claim at cleanup.
+  git -C "$PROJECT_DIR" config --local --unset firstmate.treehouseRepository
+  if out=$(run_teardown "$id"); then fail 'removed canonical mapping authorized cleanup'; fi
+  [ ! -e "$returned" ] && [ -f "$claim/owner" ] || fail 'mapping refusal changed custody'
+  git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$canonical"
+  out=$(run_teardown "$id")
+  expect_code 0 "$?" "canonical-linked cleanup failed: $out"
+  [ "$(cat "$returned")" = "$canonical" ] || fail 'return resolved a different pool than acquire'
+  [ ! -e "$claim" ] || fail 'canonical-linked cleanup did not release its exact claim'
+  pass 'explicit canonical mapping allocates, publishes, freshens and returns in the same Git store'
+}
+
+test_canonical_mapping_rejects_wrong_store_and_missing_claim() {
+  local variant id out canonical wrong
+  for variant in wrong-store missing-claim; do
+    id="pool-canonical-$variant"
+    read_case_record "$(make_case "$id" "$id")"
+    canonical=$PROJECT_DIR
+    PROJECT_DIR="$CASE_DIR/registered"
+    git clone --quiet "file://$CASE_DIR/origin.git" "$PROJECT_DIR"
+    git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$canonical"
+    if [ "$variant" = wrong-store ]; then
+      wrong="$CASE_DIR/wrong-slot"
+      git -C "$PROJECT_DIR" worktree add --quiet --detach "$wrong" HEAD
+      POOL_DIR=$wrong
+    fi
+    commit_sentinel
+    record_git_calls
+    if out=$(FM_FAKE_SKIP_CLAIM=1 FM_FAKE_LAUNCH_LOG="$CASE_DIR/launch.log" run_spawn "$id" --mode direct-PR --yolo off); then
+      fail "canonical $variant allowed freshen or launch"
+    fi
+    assert_no_refresh_or_launch
+    assert_sentinel
+    [ ! -e "$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim" ] \
+      || fail 'canonical refusal manufactured a claim'
+  done
+  pass 'canonical mapping still refuses wrong-store and unpublished custody without touching unlanded bytes'
+}
+
+test_claimed_unlanded_head_refuses() {
+  local id=pool-claimed-unlanded out
+  read_case_record "$(make_case "$id" "$id")"
+  commit_sentinel
+  if out=$(run_spawn "$id" --mode direct-PR --yolo off); then fail 'freshen discarded a claimed unlanded HEAD'; fi
+  assert_contains "$out" 'unlanded or unverifiable commits' 'missing preservation refusal'
+  assert_sentinel
+  pass 'even valid custody cannot freshen away unlanded commits'
+}
+
+test_treehouse_not_returned_preserves_claim() {
+  local id=pool-return-exit3 out claim before head
+  read_case_record "$(make_case "$id" "$id")"
+  out=$(run_spawn "$id" --mode direct-PR --yolo off)
+  expect_code 0 "$?" "exit-3 fixture spawn failed: $out"
+  claim="$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim"
+  before=$(cksum "$claim/owner")
+  head=$(git -C "$POOL_DIR" rev-parse HEAD)
+  printf '#!/usr/bin/env bash\necho attempted >> %q\necho "worktree not returned: cleaning declined" >&2\nexit 3\n' \
+    "$CASE_DIR/return-attempts" > "$FAKEBIN_DIR/treehouse"
+  if out=$(run_teardown "$id"); then fail 'Treehouse exit 3 was accepted as a successful return'; fi
+  assert_contains "$out" 'worktree not returned' 'return-aborted diagnostic lost'
+  [ "$(wc -l < "$CASE_DIR/return-attempts" | tr -d ' ')" = 1 ] || fail 'not-returned result was automatically retried'
+  [ "$(cksum "$claim/owner")" = "$before" ] || fail 'exit 3 released or rewrote the claim'
+  [ -f "$HOME_DIR/state/$id.meta" ] || fail 'exit 3 removed the task metadata'
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$head" ] || fail 'exit 3 changed retained HEAD'
+  pass 'Treehouse not-returned exit 3 refuses cleanup without retry or claim release'
+}
+
+test_invalid_mapping_refuses_before_allocation() {
+  local variant id out mapping
+  for variant in relative empty duplicate subdirectory missing; do
+    id="pool-mapping-$variant"
+    read_case_record "$(make_case "$id" "$id")"
+    case "$variant" in
+      relative) mapping=../project ;;
+      empty) mapping= ;;
+      duplicate) mapping=$PROJECT_DIR ;;
+      subdirectory) mkdir "$PROJECT_DIR/subdir"; mapping="$PROJECT_DIR/subdir" ;;
+      missing) mapping="$CASE_DIR/absent" ;;
+    esac
+    git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$mapping"
+    if [ "$variant" = duplicate ]; then
+      git -C "$PROJECT_DIR" config --local --add firstmate.treehouseRepository "$mapping"
+    fi
+    if out=$(FM_FAKE_ALLOCATION_LOG="$CASE_DIR/allocation.log" run_spawn "$id" --mode direct-PR --yolo off); then
+      fail "$variant repository mapping permitted allocation: $out"
+    fi
+    [ ! -e "$CASE_DIR/allocation.log" ] || fail "$variant mapping reached Treehouse allocation"
+    [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$INITIAL_SHA" ] || fail 'invalid mapping changed HEAD'
+  done
+  pass 'invalid or ambiguous explicit repository mappings refuse before allocation'
+}
+
+fixture_treehouse() { # <binary> <canonical-repository> <fixture-dir> [args...]
+  local provider=$1 canonical=$2 fixture=$3
+  shift 3
+  # Placement and shell-origin environment from the worker must not escape the
+  # explicit fixture root, including when testing newer official releases.
+  (cd "$canonical" && env -u TREEHOUSE_DIR -u TREEHOUSE_WORKTREE_PATH \
+    -u TREEHOUSE_UNIQUE_LEAF -u TREEHOUSE_APFS_SHARING \
+    HOME="$fixture/provider-home" XDG_CONFIG_HOME="$fixture/provider-home/.config" \
+    XDG_CACHE_HOME="$fixture/provider-home/.cache" \
+    "$provider" --root "$fixture/provider-root" "$@")
+}
+
+# Opt-in provider capability probe: only disposable repositories, a private
+# HOME (no operator hooks/config), and an explicit root beneath this fixture.
+# No shared pool is discovered, no lease record is edited, and no return/reset
+# is requested. Cleanup removes the entire test-owned world via tests/lib.sh.
+# The ordinary suite keeps using fake terminals/providers; this probe tests
+# the actual installed CLI, and prints its path/version for later rechecks.
+test_installed_treehouse_lease_and_canonical_claim() {
+  [ "${FM_TEST_REAL_TREEHOUSE:-0}" = 1 ] || return 0
+  local id=pool-real-provider provider version provider_bytes canonical first second third first_path second_path third_path out before claim clean_head
+  provider=${FM_TEST_TREEHOUSE_BIN:-$(command -v treehouse)}
+  case "$provider" in /*) ;; *) fail 'real provider probe requires an absolute executable path' ;; esac
+  [ -x "$provider" ] || fail 'real provider probe requires an executable treehouse binary'
+  version=$("$provider" --version) || fail 'cannot read installed treehouse version'
+  provider_bytes=$(cksum "$provider") || fail 'cannot identify installed provider bytes'
+  printf '# installed provider: %s %s\n' "$provider" "$version"
+  read_case_record "$(make_case "$id" "$id")"
+  canonical=$PROJECT_DIR
+  PROJECT_DIR="$CASE_DIR/registered clone"
+  git clone --quiet "file://$CASE_DIR/origin.git" "$PROJECT_DIR"
+  git -C "$PROJECT_DIR" config --local firstmate.treehouseRepository "$canonical"
+  git -C "$canonical" fetch --quiet origin
+  mkdir -p "$CASE_DIR/provider-home" "$CASE_DIR/provider-root"
+  first=$(fixture_treehouse "$provider" "$canonical" "$CASE_DIR" get --lease --json --no-fetch --lease-holder "$id") \
+    || fail 'isolated real provider acquire failed'
+  first_path=$(printf '%s\n' "$first" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])') \
+    || fail 'provider did not return a JSON lease path'
+  case "$first_path" in "$CASE_DIR/provider-root/"*) ;; *) fail 'provider escaped explicit fixture root' ;; esac
+  POOL_DIR=$first_path
+  # Real Git identity plus the existing acquired-shell stub proves publication
+  # against a slot actually allocated from the explicitly mapped repository.
+  out=$(run_spawn "$id" --mode direct-PR --yolo off)
+  expect_code 0 "$?" "real-provider canonical slot did not publish/start: $out"
+  claim="$(git -C "$POOL_DIR" rev-parse --absolute-git-dir)/fm-slot-claim"
+  [ -f "$claim/owner" ] || fail 'real-provider canonical slot claim was skipped'
+  clean_head=$(git -C "$POOL_DIR" rev-parse HEAD)
+  before=$(cksum "$claim/owner")
+  # No worker process is left in the clean, landed slot. Its durable lease, not process
+  # liveness or our Git-admin claim, must keep a stopped task out of allocation.
+  second=$(fixture_treehouse "$provider" "$canonical" "$CASE_DIR" get --lease --json --no-fetch --lease-holder next-task) \
+    || fail 'isolated next-task acquire failed'
+  second_path=$(printf '%s\n' "$second" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])') \
+    || fail 'provider did not return the second JSON lease path'
+  case "$second_path" in "$CASE_DIR/provider-root/"*) ;; *) fail 'second allocation escaped fixture root' ;; esac
+  [ "$first_path" != "$second_path" ] || fail 'provider reused a durably leased stopped slot'
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$clean_head" ] || fail 'provider moved a clean kept-original slot'
+  assert_grep 'must survive a newly spawned branch' "$POOL_DIR/advanced-main.txt" 'provider changed kept-original bytes'
+  commit_sentinel
+  third=$(fixture_treehouse "$provider" "$canonical" "$CASE_DIR" get --lease --json --no-fetch --lease-holder third-task) \
+    || fail 'isolated third-task acquire failed'
+  third_path=$(printf '%s\n' "$third" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"])') \
+    || fail 'provider did not return the third JSON lease path'
+  case "$third_path" in "$CASE_DIR/provider-root/"*) ;; *) fail 'third allocation escaped fixture root' ;; esac
+  [ "$third_path" != "$first_path" ] && [ "$third_path" != "$second_path" ] || fail 'provider reused a stopped leased slot'
+  assert_sentinel
+  [ "$(cksum "$claim/owner")" = "$before" ] || fail 'next allocation changed the retained task claim'
+  [ "$("$provider" --version)" = "$version" ] && [ "$(cksum "$provider")" = "$provider_bytes" ] \
+    || fail 'installed provider changed during probe; rerun after the external update completes'
+  pass 'installed provider explicit-root durable lease retains stopped work and canonical claim publication succeeds'
+}
+
+test_installed_treehouse_lease_and_canonical_claim
+test_treehouse_not_returned_preserves_claim
+test_invalid_mapping_refuses_before_allocation
+test_explicit_canonical_mapping_publishes_and_releases
+test_canonical_mapping_rejects_wrong_store_and_missing_claim
+test_claimed_unlanded_head_refuses
 test_separately_seeded_same_origin_refuses
 test_missing_and_incorrect_claim_refuse
 test_stale_same_store_path_cannot_claim_another_slot

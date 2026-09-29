@@ -1899,9 +1899,18 @@ EOF
 # shellcheck source=bin/fm-slot-custody-lib.sh
 . "$SCRIPT_DIR/fm-slot-custody-lib.sh"
 SLOT_TOKEN=
+SLOT_REPOSITORY=$PROJ_ABS_REAL
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  SLOT_REPOSITORY=$(fm_slot_repository "$PROJ_ABS") || exit 1
+fi
+
+check_spawn_slot_custody() {
+  [ "$BACKEND" = orca ] || fm_slot_check "$PROJ_ABS" "$WT" "$STATE" "$ID" "$SLOT_TOKEN"
+}
 
 freshen_spawn_worktree_base() {  # <worktree>
   local worktree=$1 default target expected actual status
+  check_spawn_slot_custody || return 1
   if ! git -C "$worktree" fetch --quiet origin; then
     echo "error: could not fetch origin for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
@@ -1923,7 +1932,7 @@ freshen_spawn_worktree_base() {  # <worktree>
     echo "error: '$target' is not a commit for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   }
-  status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
+  status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=all) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
   }
@@ -1935,6 +1944,11 @@ freshen_spawn_worktree_base() {  # <worktree>
     fi
     return 1
   fi
+  if ! git -C "$worktree" merge-base --is-ancestor HEAD "$target"; then
+    echo "error: pooled worktree '$worktree' has unlanded or unverifiable commits; preserving HEAD and refusing to freshen" >&2
+    return 1
+  fi
+  check_spawn_slot_custody || return 1
   if ! git -C "$worktree" reset --hard "$target" >/dev/null; then
     echo "error: could not reset pooled worktree '$worktree' to '$target'; refusing to launch from a potentially stale base" >&2
     return 1
@@ -2429,7 +2443,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fi
   [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  spawn_send_text_line "$WT_TARGET" 'treehouse get'
+  if [ "$SLOT_REPOSITORY" = "$PROJ_ABS_REAL" ]; then
+    spawn_send_text_line "$WT_TARGET" 'treehouse get'
+  else
+    spawn_send_text_line "$WT_TARGET" "cd $(shell_quote "$SLOT_REPOSITORY") && treehouse get"
+  fi
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
   # Target the stable window id, not the name: if the name is ever lost (e.g. an
@@ -2456,7 +2474,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     p=$(spawn_current_path "$WT_TARGET" || true)
     if [ -n "$p" ]; then
       p_real=$(real_path_or_raw "$p")
-      if [ "$p_real" != "$PROJ_ABS_REAL" ]; then
+      if [ "$p_real" != "$PROJ_ABS_REAL" ] && [ "$p_real" != "$SLOT_REPOSITORY" ]; then
         if [ -n "$candidate" ] && [ "$p_real" = "$candidate" ]; then
           WT="$p"
           break

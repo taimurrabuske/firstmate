@@ -291,6 +291,61 @@ test_unsafe_secondmate_home_skipped_before_git_update() {
   pass "T11 unsafe secondmate home is not fast-forwarded"
 }
 
+# The existing library's commit mode is the guarded convergence primitive:
+# it can select a fetched fork revision without changing or pushing origin.
+# A dirty/untracked primary still refuses; a snapshot alone is not permission
+# to bypass that guard. This fixture integrates only disposable test histories.
+test_pinned_fork_convergence_preserves_both_histories() {
+  local w primary_tip fork_tip candidate out before
+  w=$(new_world pinned-fork)
+  git clone -q "$w/origin.git" "$w/fork"
+  printf 'primary-only\n' > "$w/main/primary.txt"
+  printf 'state/\n' > "$w/main/.gitignore"
+  git -C "$w/main" add primary.txt .gitignore
+  git -C "$w/main" commit -qm primary-only
+  primary_tip=$(git -C "$w/main" rev-parse HEAD)
+  printf 'fork-only\n' > "$w/fork/fork.txt"
+  git -C "$w/fork" add fork.txt
+  git -C "$w/fork" commit -qm fork-only
+  fork_tip=$(git -C "$w/fork" rev-parse HEAD)
+  git -C "$w/fork" fetch -q "$w/main" HEAD
+  git -C "$w/fork" merge -q --no-ff -m fixture-integration FETCH_HEAD
+  candidate=$(git -C "$w/fork" rev-parse HEAD)
+  git -C "$w/main" fetch -q "$w/fork" "$candidate"
+  git clone -q "$w/main" "$w/dirty-primary"
+  printf 'unique untracked bytes\n' > "$w/dirty-primary/local-notes"
+  git -C "$w/dirty-primary" fetch -q "$w/fork" "$candidate"
+  mkdir -p "$w/main/state"
+  printf 'retained operational bytes\n' > "$w/main/state/sentinel"
+  before=$(git -C "$w/main" remote get-url origin)
+  out=$(run_update "$w")
+  assert_contains "$out" 'firstmate: skipped: diverged from origin/main' 'ordinary origin update did not refuse primary-only history'
+  out=$(FM_ROOT="$w/main" FM_HOME="$w/home" bash -c '
+    . "$1/bin/fm-ff-lib.sh"
+    ff_target "$2" primary "$3" no no
+    [ "$FF_STATUS" = updated ]
+  ' _ "$ROOT" "$w/main" "$candidate")
+  expect_code 0 "$?" "pinned fork convergence failed: $out"
+  git -C "$w/main" merge-base --is-ancestor "$primary_tip" HEAD || fail 'primary history lost'
+  git -C "$w/main" merge-base --is-ancestor "$fork_tip" HEAD || fail 'fork history lost'
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$candidate" ] || fail 'wrong fork candidate landed'
+  [ "$(git -C "$w/main" remote get-url origin)" = "$before" ] || fail 'convergence rewrote origin'
+  assert_grep 'primary-only' "$w/main/primary.txt" 'primary file lost'
+  assert_grep 'fork-only' "$w/main/fork.txt" 'fork file lost'
+  assert_grep 'retained operational bytes' "$w/main/state/sentinel" 'operational bytes lost'
+  out=$(FM_ROOT="$w/main" FM_HOME="$w/home" bash -c '
+    . "$1/bin/fm-ff-lib.sh"
+    ff_target "$2" primary "$3" no no
+    [ "$FF_STATUS" = skipped ]
+  ' _ "$ROOT" "$w/dirty-primary" "$candidate")
+  expect_code 0 "$?" 'untracked primary did not refuse pinned convergence'
+  assert_contains "$out" 'dirty working tree' 'untracked refusal was not explicit'
+  [ "$(git -C "$w/dirty-primary" rev-parse HEAD)" = "$primary_tip" ] || fail 'untracked primary HEAD changed'
+  assert_grep 'unique untracked bytes' "$w/dirty-primary/local-notes" 'untracked bytes changed'
+  pass 'pinned fork convergence preserves both histories and ignored bytes; untracked primary remains refused'
+}
+
+test_pinned_fork_convergence_preserves_both_histories
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
 test_dirty_secondmate_skipped
