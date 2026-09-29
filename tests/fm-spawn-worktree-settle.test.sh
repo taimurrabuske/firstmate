@@ -14,8 +14,8 @@
 # the stale first read.
 set -u
 
-# shellcheck source=tests/fixtures.sh
-. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-worktree-settle)
@@ -26,8 +26,7 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-worktree-settle)
 # transiently reports a stale cwd before settling into the real worktree.
 make_settle_fakebin() {
   local dir=$1 fakebin
-  fakebin=$(make_spawn_fakebin "$dir")
-  mv "$fakebin/tmux" "$fakebin/tmux-base"
+  fakebin=$(fm_fakebin "$dir")
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -46,7 +45,13 @@ case "$*" in
     exit 0
     ;;
 esac
-exec "$(dirname "$0")/tmux-base" "$@"
+case "${1:-}" in
+  display-message) printf 'firstmate\n'; exit 0 ;;
+  list-windows) exit 0 ;;
+  has-session|new-session|new-window|kill-window) exit 0 ;;
+  send-keys) exit 0 ;;
+esac
+exit 0
 SH
   chmod +x "$fakebin/tmux"
   fm_fake_exit0 "$fakebin" treehouse

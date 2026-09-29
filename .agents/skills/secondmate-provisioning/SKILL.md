@@ -234,7 +234,6 @@ It never initiates a survey or audit during recovery.
 A secondmate is persistent by default.
 An empty queue is healthy and does not trigger teardown.
 Run `bin/fm-teardown.sh <id>` for `kind=secondmate` only when the captain or main firstmate explicitly decides to retire that persistent second mate.
-Before retirement, copy every report and artifact referenced by the mate's open tasks or links into the main home's `data/` at the same relative path, repoint links to the preserved copies, and sweep the mate's open-task links for paths that no longer resolve.
 
 The safety check is the secondmate's own home.
 Teardown refuses while its `state/*.meta` contains in-flight work.

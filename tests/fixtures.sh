@@ -105,18 +105,6 @@ fm_test_fake_tmux_spawn() {
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
-# A batch fixture may supply a queue of distinct allocations; never reuse a
-# still-claimed slot merely because the terminal itself is fake.
-if [ -n "${FM_FAKE_PANE_SEQUENCE:-}" ]; then
-  if [ "${1:-}" = new-window ]; then
-    head -n 1 "$FM_FAKE_PANE_SEQUENCE" > "$FM_FAKE_PANE_SEQUENCE.current"
-    tail -n +2 "$FM_FAKE_PANE_SEQUENCE" > "$FM_FAKE_PANE_SEQUENCE.next"
-    mv "$FM_FAKE_PANE_SEQUENCE.next" "$FM_FAKE_PANE_SEQUENCE"
-  fi
-  if [ -f "$FM_FAKE_PANE_SEQUENCE.current" ]; then
-    FM_FAKE_PANE_PATH=$(cat "$FM_FAKE_PANE_SEQUENCE.current")
-  fi
-fi
 case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
 esac
@@ -130,17 +118,6 @@ case "${1:-}" in
     ;;
   has-session|new-session|new-window|kill-window|set-window-option) exit 0 ;;
   send-keys)
-    # Execute only the custody publication sent into the acquired test shell.
-    # Keep its actual cwd independently overridable from the observed pane path.
-    for a in "$@"; do
-      case "$a" in
-        bash\ *fm-slot-custody.sh*\ claim\ *)
-          if [ "${FM_FAKE_SKIP_CLAIM:-0}" != 1 ]; then
-            (cd "${FM_FAKE_ACQUIRED_PATH:-$FM_FAKE_PANE_PATH}" && eval "$a")
-          fi
-          ;;
-      esac
-    done
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       prev=
       for a in "$@"; do
