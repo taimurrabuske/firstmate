@@ -1,0 +1,18 @@
+ok - allowlist=absent preserves the operational floor and filters only when opted in
+ok - allowlist=missing-config preserves the operational floor and filters only when opted in
+ok - allowlist=enabled preserves the operational floor and filters only when opted in
+ok - allowlist=empty preserves the operational floor and filters only when opted in
+ok - invalid allowlist names refuse before launch or task publication
+ok - inaccessible config with present allowlist refuses before launch or task publication
+ok - inaccessible config with absent allowlist refuses before launch or task publication
+ok - inaccessible ancestor with present allowlist refuses before launch or task publication
+ok - inaccessible ancestor with absent allowlist refuses before launch or task publication
+ok - secondmate launch inherits the allowlist for subsequent worker launches
+ok - local inheritance preserves the allowlist on source errors and mirrors proven absence
+ok - remote inheritance preserves the allowlist on source errors and mirrors proven absence
+spawn_status=0
+quota-preflight: pi:zai/glm-5.3-flash provider zai is exhausted_now at all_models (0% left); this worker will stall on its first request - choose the next same-group candidate
+warning: /tmp/fm-spawn-dispatch-profile.lX388k/quota-preflight-e2e/home/data/quota-preflight-e2e/launch-brief.md records no ship branch; defaulting to legacy branch fm/quota-preflight-e2e
+warning: /tmp/fm-spawn-dispatch-profile.lX388k/quota-preflight-e2e/home/data/quota-preflight-e2e/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned quota-preflight-e2e harness=pi kind=ship mode=no-mistakes yolo=off window=firstmate:fm-quota-preflight-e2e worktree=/tmp/fm-spawn-dispatch-profile.lX388k/quota-preflight-e2e/wt
+meta_profile=pi/zai/glm-5.3-flash/high

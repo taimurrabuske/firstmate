@@ -1,0 +1,5 @@
+ok - fm-quota-preflight: an exhausted candidate gets one notice, a healthy one none
+ok - fm-quota-preflight: the declared provider, effort, and quota scope bind safely
+ok - fm-quota-preflight: explicit lanes and account roots select the launched account
+ok - fm-quota-preflight: ordinary Claude preserves its unset config-root contract
+ok - fm-quota-preflight: quiet and successful whenever it has no evidence to speak from

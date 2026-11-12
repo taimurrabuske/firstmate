@@ -1,0 +1,7 @@
+ok - fm-secondmate-rotate tokens: Pi and Claude transcripts are measured, everything else is unmeasured
+ok - fm-secondmate-rotate tokens: Herdr bare IDs select exact, unambiguous Pi transcripts
+ok - fm-secondmate-rotate tokens: unreadable Herdr registrations stay unmeasured
+ok - fm-secondmate-rotate tokens: account-pinned Pi roots are measured
+ok - fm-secondmate-rotate scan: only idle local mates past the threshold, at most once per window
+ok - fm-secondmate-rotate scan: an invalid restart command does not consume a rotation window
+ok - fm-secondmate-rotate: the watcher sweep rotates a due mate and queues one wake

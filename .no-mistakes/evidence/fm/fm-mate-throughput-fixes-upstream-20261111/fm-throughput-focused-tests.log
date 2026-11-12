@@ -1,0 +1,31 @@
+Firstmate throughput intent: focused executable-interface validation
+$ bash tests/fm-control.test.sh
+ok - fm-control exit: a busy Pi is exited once its composer settles after the interrupt
+ok - fm-control exit: text left in a settled composer still refuses and is never cleared
+ok - fm-control exit: agy clears only after an explicit idle status marker
+ok - fm-control-lib: --fresh-session moves a resumed session file aside and refuses a reference it cannot
+$ bash tests/fm-agy-harness.test.sh
+ok - fm-control-lib: agy mechanics are Escape once, no clear key, and /quit
+ok - fm-busy-lib: only the pinned esc-to-cancel row carries the agy busy verdict
+ok - fm-busy-lib: agy classifies busy, idle, and ambiguous tails distinctly
+ok - fm-spawn: agy secondmate pre-trusts the secondmate home and records kind=secondmate
+$ bash tests/fm-secondmate-rotate.test.sh
+ok - fm-secondmate-rotate tokens: Pi and Claude transcripts are measured, everything else is unmeasured
+ok - fm-secondmate-rotate tokens: Herdr bare IDs select exact, unambiguous Pi transcripts
+ok - fm-secondmate-rotate tokens: unreadable Herdr registrations stay unmeasured
+ok - fm-secondmate-rotate tokens: account-pinned Pi roots are measured
+ok - fm-secondmate-rotate scan: only idle local mates past the threshold, at most once per window
+ok - fm-secondmate-rotate scan: an invalid restart command does not consume a rotation window
+ok - fm-secondmate-rotate: the watcher sweep rotates a due mate and queues one wake
+$ bash tests/fm-quota-preflight.test.sh
+ok - fm-quota-preflight: an exhausted candidate gets one notice, a healthy one none
+ok - fm-quota-preflight: the declared provider, effort, and quota scope bind safely
+ok - fm-quota-preflight: explicit lanes and account roots select the launched account
+ok - fm-quota-preflight: ordinary Claude preserves its unset config-root contract
+ok - fm-quota-preflight: quiet and successful whenever it has no evidence to speak from
+$ bash tests/fm-quota-breaker.test.sh
+ok - fm-quota-breaker classify: every verified provider refusal maps to its class
+ok - fm-quota-breaker classify: a recovered refusal and a single rate limit do not trip
+ok - fm-quota-breaker scan: one report per stalled ship or scout incarnation, off without its config
+ok - fm-quota-breaker: the watcher sweep queues one wake per stalled worker, only with the gate present
+Note: the full fm-secondmate-restart.test.sh run was blocked before its --rotate case by its existing T13 fixture timeout (restart result directory never appeared); the --rotate case was run directly through the same public run_restart interface and passed.

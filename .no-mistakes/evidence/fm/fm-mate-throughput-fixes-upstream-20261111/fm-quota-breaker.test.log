@@ -1,0 +1,4 @@
+ok - fm-quota-breaker classify: every verified provider refusal maps to its class
+ok - fm-quota-breaker classify: a recovered refusal and a single rate limit do not trip
+ok - fm-quota-breaker scan: one report per stalled ship or scout incarnation, off without its config
+ok - fm-quota-breaker: the watcher sweep queues one wake per stalled worker, only with the gate present
